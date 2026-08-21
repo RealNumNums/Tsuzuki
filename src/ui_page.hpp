@@ -778,25 +778,8 @@ function applyTheme(name){
   html += '<div id="aErr"></div>';
 
   if(!acct.linked){
-    // Nothing to paste. The login happens in a window Tsuzuki owns and the
-    // token is read out of the redirect, so there is no secret, no code and
-    // no redirect URL for anyone to get right.
-    html += '<div class="wiz">'+
-      '<div class="txt">Press <b>Link AniList</b>. A sign-in window opens; approve Tsuzuki '+
-        'and it links itself.</div>'+
-      '<details style="margin-top:10px"><summary style="cursor:pointer;color:var(--dim);font-size:12.5px">'+
-        'Advanced</summary>'+
-        '<div class="txt" style="padding-top:10px">Only needed if you are running your own '+
-          'AniList application, or using the command-line build, which has no window to sign '+
-          'in with.</div>'+
-        '<div class="copyrow" style="margin:8px 0">'+
-          '<input id="wId" placeholder="Client ID" autocomplete="off" value="'+esc(acct.clientId||'')+'">'+
-          '<button class="small" id="wSaveId">Save</button></div>'+
-        '<div class="copyrow" style="margin:8px 0">'+
-          '<input id="wPaste" placeholder="Paste a redirect URL containing ?code= or #access_token=" autocomplete="off">'+
-          '<button class="small" id="wPasteGo">Finish</button></div>'+
-      '</details>'+
-    '</div>';
+    html += '<div class="wiz"><div class="txt">Press <b>Link AniList</b>. A sign-in window '+
+      'opens; approve Tsuzuki and it links itself.</div></div>';
   }
   html += '</div>';
 
@@ -851,23 +834,6 @@ function applyTheme(name){
   const showErr = m => {
     const box = $('#aErr');
     if(box) box.innerHTML = m ? '<div class="alert">'+esc(m)+'</div>' : '';
-  };
-
-  if($('#wSaveId')) $('#wSaveId').onclick = async () => {
-    const id = ($('#wId').value || '').trim();
-    if(!id) return;
-    await fetch('/api/settings', {method:'POST',headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({anilistClientId: id})});
-    showErr('Saved.');
-  };
-
-  if($('#wPasteGo')) $('#wPasteGo').onclick = async () => {
-    const v = ($('#wPaste').value || '').trim();
-    if(!v){ $('#wPaste').focus(); return; }
-    const r = await (await fetch('/api/account/code', {method:'POST',
-      headers:{'Content-Type':'application/json'}, body: JSON.stringify({code: v})})).json();
-    if(r.ok) showSettings();
-    else showErr(r.error || 'That was not accepted.');
   };
 
   async function startLink(){
