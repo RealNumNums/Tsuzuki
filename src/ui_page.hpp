@@ -521,9 +521,9 @@ const SETTING_ROWS = [
   ['savePath','text','Download folder','Where episodes are stored while you watch them.'],
   ['speedLimit','number','Speed limit (Mb/s)','0 means unlimited.'],
   ['maxConnections','number','Max connections','Peers per torrent. Higher is faster but noisier.'],
-  ['quality','select','Preferred quality','Used as the default in search.','|1080|720|480'],
-  ['audioLang','text','Preferred audio language','Track code to select automatically, e.g. jpn or eng.'],
-  ['subLang','text','Preferred subtitle language','Track code to select automatically, e.g. eng.'],
+  ['quality','select','Preferred quality','Used as the default in search.','=Any|1080=1080p|720=720p|480=480p'],
+  ['audioLang','select','Preferred audio language','Picked automatically when the release includes it.','=Auto (whatever the release defaults to)|jpn=Japanese|eng=English|spa=Spanish|por=Portuguese|fre=French|ger=German|ita=Italian|rus=Russian|chi=Chinese|kor=Korean|ara=Arabic'],
+  ['subLang','select','Preferred subtitle language','Picked automatically when the release includes it.','=Auto (whatever the release defaults to)|jpn=Japanese|eng=English|spa=Spanish|por=Portuguese|fre=French|ger=German|ita=Italian|rus=Russian|chi=Chinese|kor=Korean|ara=Arabic'],
   ['bufferSeconds','number','Extra buffer (seconds)','0 lets Tsuzuki size the buffer from measured speed.'],
   ['deleteAfter','toggle','Delete after watching','Remove each episode once you finish it.'],
   ['subsOn','toggle','Subtitles on by default','Applies when a subtitle track exists.'],
@@ -539,9 +539,16 @@ async function showSettings(){
     if(type === 'toggle'){
       control = '<div class="toggle'+(cfg[key]?' on':'')+'" data-k="'+key+'"></div>';
     } else if(type === 'select'){
-      const choices = opts.split('|');
-      control = '<select data-k="'+key+'">' + choices.map(v =>
-        '<option value="'+v+'"'+(String(cfg[key]||'')===v?' selected':'')+'>'+(v||'Any')+(v?'p':'')+'</option>').join('') + '</select>';
+      const choices = opts.split('|').map(o => {
+        const eq = o.indexOf('=');
+        return eq < 0 ? [o, o] : [o.slice(0, eq), o.slice(eq + 1)];
+      });
+      const cur = String(cfg[key] == null ? '' : cfg[key]);
+      // A value saved before this became a dropdown would otherwise silently
+      // reset to the first option, so keep it as a choice.
+      if(cur && !choices.some(c => c[0] === cur)) choices.push([cur, cur]);
+      control = '<select data-k="'+key+'">' + choices.map(([v,label]) =>
+        '<option value="'+esc(v)+'"'+(cur===v?' selected':'')+'>'+esc(label)+'</option>').join('') + '</select>';
     } else {
       control = '<input type="'+type+'" data-k="'+key+'" value="'+esc(cfg[key]==null?'':cfg[key])+'">';
     }
