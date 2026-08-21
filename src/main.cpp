@@ -96,7 +96,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const lt::file_storage& fs = info->files();
+    // libtorrent 2.1 renamed files() -> layout(); files() now only exists in
+    // the deprecated ABI block, which vcpkg's build compiles out.
+    const lt::file_storage& fs = info->layout();
     std::vector<std::pair<std::string, std::int64_t>> files;
     files.reserve((std::size_t)fs.num_files());
     for (int i = 0; i < fs.num_files(); ++i) {
