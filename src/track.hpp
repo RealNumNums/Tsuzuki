@@ -22,7 +22,19 @@ struct Account {
     std::string avatar;
 };
 
-// URL to open in a browser to start linking. Empty if no client id is set.
+// The client id Tsuzuki ships with. A client id is a public identifier, not a
+// secret - OAuth treats desktop apps as public clients precisely because they
+// cannot keep one - so baking ours in is correct, and means linking is a
+// single click rather than a setup chore for every user.
+//
+// Empty until a Tsuzuki client is registered at anilist.co/settings/developer
+// with http://127.0.0.1:7654/auth/anilist as its redirect URL.
+std::string defaultClientId();
+
+// Settings override the built-in id; otherwise the built-in one is used.
+std::string resolveClientId(const std::string& fromSettings);
+
+// URL to open in a browser to start linking. Empty if no client id is available.
 std::string authorizeUrl(const std::string& clientId, int port);
 
 void setToken(const std::string& token);

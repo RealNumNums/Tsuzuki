@@ -127,9 +127,11 @@ piece gets closer to being needed.
 
 Tsuzuki links to AniList and marks episodes watched once you pass 80% of them.
 
-It does not ship a client id. AniList issues those per application, and
-embedding one would mean borrowing someone else's identity. Register your own,
-once:
+A client id is a public identifier, not a secret - OAuth treats desktop apps as
+public clients precisely because they cannot keep one - so Tsuzuki bakes its own
+in and linking is a single click. `kDefaultClientId` in `src/track.cpp` holds it.
+
+If that is empty in this build, or you would rather use your own, register one:
 
 1. Open [anilist.co/settings/developer](https://anilist.co/settings/developer) and create a client
 2. Set the redirect URL to `http://127.0.0.1:7654/auth/anilist`

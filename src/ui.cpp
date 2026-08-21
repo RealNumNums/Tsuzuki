@@ -989,7 +989,9 @@ static void installRoutes(httplib::Server& server, Engine& e) {
         res.set_content(json{{"linked", a.linked},
                              {"name", a.name},
                              {"avatar", a.avatar},
-                             {"hasClientId", !cfg.anilistClientId.empty()},
+                             {"hasClientId", !track::resolveClientId(cfg.anilistClientId).empty()},
+                             {"usingBuiltInId", cfg.anilistClientId.empty() &&
+                                                    !track::defaultClientId().empty()},
                              {"syncProgress", cfg.syncProgress}}
                             .dump(),
                         "application/json");
@@ -997,12 +999,14 @@ static void installRoutes(httplib::Server& server, Engine& e) {
 
     server.Post("/api/account/login", [](const httplib::Request&, httplib::Response& res) {
         const Settings cfg = currentSettings();
-        const std::string url = track::authorizeUrl(cfg.anilistClientId, 7654);
+        const std::string url =
+            track::authorizeUrl(track::resolveClientId(cfg.anilistClientId), 7654);
         if (url.empty()) {
             res.set_content(
                 json{{"ok", false},
                      {"error",
-                      "Add your AniList client id in Settings first."}}
+                      "No AniList client id is available. Add one in Settings, "
+                      "or rebuild with one baked in."}}
                     .dump(),
                 "application/json");
             return;

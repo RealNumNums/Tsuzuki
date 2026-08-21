@@ -751,9 +751,12 @@ async function showSettings(){
   }
   html += '</div>';
 
-  if(!acct.hasClientId){
-    html += '<div class="steps">Linking needs a client id of your own - AniList issues these per app, '+
-      'and Tsuzuki does not ship one.<ol>'+
+  if(acct.usingBuiltInId){
+    html += '<div class="steps">Using the built-in Tsuzuki client id. You can override it '+
+      'with your own further down if you would rather.</div>';
+  } else if(!acct.hasClientId){
+    html += '<div class="steps">This build has no client id baked in yet, so linking needs one '+
+      'of your own. A client id is a public identifier, not a secret.<ol>'+
       '<li>Open <a href="https://anilist.co/settings/developer" target="_blank">anilist.co/settings/developer</a> and create a client.</li>'+
       '<li>Set the redirect URL to <code>http://127.0.0.1:7654/auth/anilist</code></li>'+
       '<li>Paste the client id into the field below. The secret is not needed.</li>'+

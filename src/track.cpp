@@ -16,6 +16,9 @@ using nlohmann::json;
 
 constexpr const char* kEndpoint = "https://graphql.anilist.co";
 
+// Registered once for Tsuzuki itself. Public identifier, no secret.
+constexpr const char* kDefaultClientId = "";
+
 std::mutex g_mutex;
 std::string g_token;
 Account g_account;
@@ -49,6 +52,12 @@ json query(const std::string& gql, const json& variables, const std::string& tok
 }
 
 }  // namespace
+
+std::string defaultClientId() { return kDefaultClientId; }
+
+std::string resolveClientId(const std::string& fromSettings) {
+    return fromSettings.empty() ? std::string(kDefaultClientId) : fromSettings;
+}
 
 std::string authorizeUrl(const std::string& clientId, int port) {
     if (clientId.empty()) return {};
