@@ -18,4 +18,17 @@ int run(int port, const std::string& savePath);
 // instead of handing it to a browser.
 bool startBackground(int port, const std::string& savePath);
 
+// Native app only. Renders video inside `hwnd` (via mpv --wid) rather than in
+// a separate player window, and calls `hook` with true just before playback
+// starts and false once it ends, so the host can swap the video surface in and
+// out. The hook runs on a worker thread - post a message, do not touch UI
+// state directly. Pass nullptr to go back to a standalone mpv window.
+using PlaybackHook = void (*)(bool active);
+void setVideoHost(void* hwnd, PlaybackHook hook);
+
+// Removes the open torrent and its data. Call before the process exits -
+// downloads are disposable, and leaving them behind is precisely the leak this
+// project exists to avoid. Safe to call when nothing is open.
+void shutdown();
+
 }  // namespace tsuzuki::ui

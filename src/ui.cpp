@@ -3,6 +3,7 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
+#include <libtorrent/alert_types.hpp>
 #include <libtorrent/magnet_uri.hpp>
 #include <libtorrent/session.hpp>
 #include <libtorrent/torrent_flags.hpp>
@@ -12,7 +13,9 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -79,6 +82,9 @@ struct Engine {
     }
 };
 
+void* g_videoHost = nullptr;
+PlaybackHook g_playbackHook = nullptr;
+
 Engine& engine() {
     static Engine e;
     return e;
@@ -123,7 +129,14 @@ bool openTorrent(Engine& e, const std::string& magnet, std::string& err) {
     atp.save_path = e.savePath;
     atp.flags |= lt::torrent_flags::upload_mode;
 
-    if (e.handle.is_valid()) e.session.remove_torrent(e.handle);
+    // Leaving a torrent takes its remaining data with it - downloads are
+    // disposable, so nothing should survive switching releases.
+    if (e.handle.is_valid()) {
+        e.session.remove_torrent(e.handle, lt::session::delete_files);
+        e.handle = lt::torrent_handle();
+        e.info.reset();
+        e.openMagnet.clear();
+    }
     e.handle = e.session.add_torrent(std::move(atp));
 
     const auto started = std::chrono::steady_clock::now();
@@ -235,17 +248,42 @@ void playFile(Engine& e, int index) {
     e.setMessage("Playing in mpv - close mpv to finish.");
 
     const std::string path = e.savePath + "/" + chosen->path;
-    const std::string cmd = "\"\"" + findMpv() + "\" \"" + path + "\"\"";
-    std::system(cmd.c_str());
 
-    e.setMessage("Finished. Cleaning up...");
-    if (e.handle.is_valid()) {
-        e.session.remove_torrent(e.handle, lt::session::delete_files);
-        e.handle = lt::torrent_handle();
+    std::string cmd = "\"\"" + findMpv() + "\"";
+    if (g_videoHost) {
+        // mpv draws straight into our window, so there is no second window and
+        // no taskbar entry - it looks and behaves like a built-in player.
+        cmd += " --wid=" + std::to_string(reinterpret_cast<std::uintptr_t>(g_videoHost));
+        cmd += " --no-border --osc=yes --keep-open=no";
     }
-    e.info.reset();
-    e.openMagnet.clear();
-    e.setMessage("Done - files removed.");
+    cmd += " \"" + path + "\"\"";
+
+    if (g_playbackHook) g_playbackHook(true);
+    std::system(cmd.c_str());
+    if (g_playbackHook) g_playbackHook(false);
+
+    // Remove only the episode just watched, and keep the torrent open. Tearing
+    // the whole torrent down here meant the file list on screen pointed at
+    // something that no longer existed, so picking a second episode from the
+    // same batch failed with "that file is no longer available".
+    e.setMessage("Finished. Removing that episode...");
+    e.handle.file_priority(fidx, lt::dont_download);
+
+    // libtorrent may still hold the handle for a moment after the priority
+    // drop, so give the delete a few attempts before reporting it stuck.
+    bool removed = false;
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        std::error_code ec;
+        if (std::filesystem::remove(path, ec) || !std::filesystem::exists(path, ec)) {
+            removed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+
+    e.setMessage(removed ? "Episode removed. Pick another one."
+                         : "Finished, but that file could not be deleted yet - "
+                           "it will go when you close Tsuzuki.");
     e.done = true;
     e.playing = false;
 }
@@ -259,6 +297,39 @@ void openBrowser(const std::string& url) {
 }
 
 }  // namespace
+
+void shutdown() {
+    Engine& e = engine();
+    std::lock_guard<std::mutex> lock(e.mutex);
+    if (!e.handle.is_valid()) return;
+
+    e.session.remove_torrent(e.handle, lt::session::delete_files);
+    e.handle = lt::torrent_handle();
+    e.info.reset();
+    e.openMagnet.clear();
+
+    // Wait for the delete to be confirmed rather than assuming it happened -
+    // a delete racing the player is exactly how data gets left behind.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < deadline) {
+        std::vector<lt::alert*> alerts;
+        e.session.pop_alerts(&alerts);
+        bool settled = false;
+        for (const lt::alert* a : alerts) {
+            if (lt::alert_cast<lt::torrent_deleted_alert>(a) ||
+                lt::alert_cast<lt::torrent_delete_failed_alert>(a)) {
+                settled = true;
+            }
+        }
+        if (settled) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+}
+
+void setVideoHost(void* hwnd, PlaybackHook hook) {
+    g_videoHost = hwnd;
+    g_playbackHook = hook;
+}
 
 static void installRoutes(httplib::Server& server, Engine& e) {
     server.Get("/", [](const httplib::Request&, httplib::Response& res) {

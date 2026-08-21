@@ -49,7 +49,7 @@ is reported, not papered over.
 | Filename parsing | Anitomy (native C++, vendored via FetchContent) |
 | HTTP / JSON / XML | libcurl, nlohmann-json, pugixml |
 | UI | Win32 + WebView2 (`Tsuzuki.exe`); HTML via cpp-httplib on loopback |
-| Playback | mpv subprocess now; libmpv + libass later |
+| Playback | mpv rendered into the app window (--wid) |
 | Build | CMake + vcpkg manifest mode, MSVC |
 
 ## Roadmap
@@ -70,7 +70,7 @@ is reported, not papered over.
 - [x] **M5** — **native app** (`Tsuzuki.exe`): a Win32 window hosting the
   interface in a WebView2 control, dark title bar, real icon, no browser
   chrome. Same engine in-process; the loopback server is only the transport
-  between C++ and the view. Embedded libmpv + libass still to come.
+  between C++ and the view. Video plays **inside the window** via mpv --wid.
 
 M1 deliberately shells out to `mpv` rather than embedding libmpv: libtorrent
 writes to disk and mpv plays a growing file happily, which keeps the first

@@ -33,6 +33,30 @@ constexpr wchar_t kClassName[] = L"TsuzukiAppWindow";
 ComPtr<ICoreWebView2Controller> g_controller;
 ComPtr<ICoreWebView2> g_webview;
 
+// Child window mpv draws into. Hidden until something plays, so the interface
+// owns the whole client area the rest of the time.
+HWND g_video = nullptr;
+HWND g_main = nullptr;
+constexpr UINT WM_PLAYBACK = WM_APP + 1;
+
+// Called from the engine worker thread, so it only posts.
+void onPlaybackActive(bool active) {
+    if (g_main) PostMessageW(g_main, WM_PLAYBACK, active ? 1 : 0, 0);
+}
+
+void layout(HWND hwnd, bool playing) {
+    RECT b{};
+    GetClientRect(hwnd, &b);
+    if (g_video) {
+        MoveWindow(g_video, 0, 0, b.right - b.left, b.bottom - b.top, TRUE);
+        ShowWindow(g_video, playing ? SW_SHOW : SW_HIDE);
+    }
+    if (g_controller) {
+        g_controller->put_Bounds(b);
+        g_controller->put_IsVisible(playing ? FALSE : TRUE);
+    }
+}
+
 std::wstring userDataFolder() {
     wchar_t buf[MAX_PATH] = {};
     DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
@@ -60,12 +84,15 @@ void useDarkTitleBar(HWND hwnd) {
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_SIZE:
-            if (g_controller) {
-                RECT bounds{};
-                GetClientRect(hwnd, &bounds);
-                g_controller->put_Bounds(bounds);
-            }
+            layout(hwnd, g_video && IsWindowVisible(g_video));
             return 0;
+
+        case WM_PLAYBACK: {
+            const bool playing = wp != 0;
+            layout(hwnd, playing);
+            if (playing) SetFocus(g_video);
+            return 0;
+        }
 
         case WM_GETMINMAXINFO: {
             auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
@@ -75,6 +102,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
 
         case WM_DESTROY:
+            // Take the downloads with us on the way out.
+            tsuzuki::ui::shutdown();
             PostQuitMessage(0);
             return 0;
 
@@ -119,6 +148,20 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int showCmd) {
         fatal(nullptr, L"Could not create the window.");
         return 1;
     }
+
+    g_main = hwnd;
+
+    // Plain black child window; mpv is told to render into it with --wid.
+    WNDCLASSEXW vc{};
+    vc.cbSize = sizeof(vc);
+    vc.lpfnWndProc = DefWindowProcW;
+    vc.hInstance = instance;
+    vc.hbrBackground = CreateSolidBrush(RGB(0, 0, 0));
+    vc.lpszClassName = L"TsuzukiVideo";
+    RegisterClassExW(&vc);
+    g_video = CreateWindowExW(0, L"TsuzukiVideo", nullptr, WS_CHILD | WS_CLIPCHILDREN,
+                              0, 0, 0, 0, hwnd, nullptr, instance, nullptr);
+    tsuzuki::ui::setVideoHost(g_video, onPlaybackActive);
 
     useDarkTitleBar(hwnd);
     ShowWindow(hwnd, showCmd);
