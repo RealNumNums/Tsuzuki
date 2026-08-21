@@ -136,24 +136,30 @@ Finishing an episode (past 90%) clears its resume point and syncs progress.
 
 ## Accounts
 
-Tsuzuki links to AniList and marks episodes watched once you pass 80% of them.
+Press **Link AniList**. A sign-in window opens, you approve Tsuzuki, and it
+links itself. Episodes are marked watched once you pass 80% of them.
 
-AniList rejects the implicit grant (unsupported_grant_type - it is deprecated in
-OAuth 2.1 and they have disabled it), so linking uses the authorization code
-flow, which does need a client secret.
+The mechanism is the one hayase-app/interface uses:
 
-Build credentials live in `src/secrets.local.hpp`, which is gitignored: a built
-binary can carry them so linking is one click, while this repository carries
-none. To build your own:
+```
+authorize?client_id=<id>&response_type=token
+```
 
-1. Open [anilist.co/settings/developer](https://anilist.co/settings/developer) and create a client
-2. Set the redirect URL to `http://127.0.0.1:7654/auth/anilist`
-3. Put the id and secret in `src/secrets.local.hpp`, or paste them into
-   Settings → Account at runtime.
+Implicit grant, and deliberately **no `redirect_uri`**. AniList redirects to
+whatever the client is registered with, and the app hosts that navigation in a
+WebView2 window it owns, reading the token out of the fragment before the
+target page can load. The registered URL therefore never has to be reachable,
+or even correct — which removes the client secret, the loopback listener, the
+authorization code and the redirect URL from the process entirely.
 
-Linking uses the implicit grant, so no secret is ever stored. The token lives in
-`%LOCALAPPDATA%\Tsuzuki\auth.json` and is cleared automatically if AniList
-stops accepting it.
+Passing a `redirect_uri` alongside `response_type=token` is what AniList
+answers with `unsupported_grant_type`; that one wrong parameter is why this
+took a detour through the authorization code flow first.
+
+The client id lives in gitignored `src/secrets.local.hpp`, so a built binary
+carries it and this repository does not. The token is stored in
+`%LOCALAPPDATA%\Tsuzuki\auth.json`, and is discarded only when AniList
+actually rejects it — never on a timeout.
 
 ## Licence note
 
