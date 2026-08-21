@@ -234,12 +234,7 @@ void openBrowser(const std::string& url) {
 
 }  // namespace
 
-int run(int port, const std::string& savePath) {
-    Engine& e = engine();
-    e.savePath = savePath;
-
-    httplib::Server server;
-
+static void installRoutes(httplib::Server& server, Engine& e) {
     server.Get("/", [](const httplib::Request&, httplib::Response& res) {
         res.set_content(kIndexHtml, "text/html; charset=utf-8");
     });
@@ -374,6 +369,14 @@ int run(int port, const std::string& savePath) {
         };
         res.set_content(reply.dump(), "application/json");
     });
+}
+
+int run(int port, const std::string& savePath) {
+    Engine& e = engine();
+    e.savePath = savePath;
+
+    httplib::Server server;
+    installRoutes(server, e);
 
     const std::string url = "http://127.0.0.1:" + std::to_string(port) + "/";
     std::cout << "\n  Tsuzuki UI running at " << url << "\n"
@@ -391,6 +394,26 @@ int run(int port, const std::string& savePath) {
         return 1;
     }
     return 0;
+}
+
+bool startBackground(int port, const std::string& savePath) {
+    Engine& e = engine();
+    e.savePath = savePath;
+
+    // Leaked deliberately: the server must outlive this call and lives until
+    // the process exits.
+    auto* server = new httplib::Server();
+    installRoutes(*server, e);
+
+    std::thread([server, port] { server->listen("127.0.0.1", port); }).detach();
+
+    // Wait until it is actually accepting, so the window never navigates to a
+    // dead port and shows an error page on first paint.
+    for (int i = 0; i < 100; ++i) {
+        if (server->is_running()) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return false;
 }
 
 }  // namespace tsuzuki::ui

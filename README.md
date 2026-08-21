@@ -48,7 +48,7 @@ is reported, not papered over.
 | Torrent | libtorrent-rasterbar |
 | Filename parsing | Anitomy (native C++, vendored via FetchContent) |
 | HTTP / JSON / XML | libcurl, nlohmann-json, pugixml |
-| UI | HTML served on 127.0.0.1 via cpp-httplib |
+| UI | Win32 + WebView2 (`Tsuzuki.exe`); HTML via cpp-httplib on loopback |
 | Playback | mpv subprocess now; libmpv + libass later |
 | Build | CMake + vcpkg manifest mode, MSVC |
 
@@ -67,10 +67,10 @@ is reported, not papered over.
   is keyed by)
 - [x] **M4** — delete-on-exit, verified via `torrent_deleted_alert` **and** a
   filesystem check; reports honestly when cleanup does not happen
-- [x] **M5** — browser UI served from the binary (cpp-httplib on 127.0.0.1),
-  with the logo and mascot; double-clicking the exe opens it. Native toolkit
-  deferred: HTML avoids a multi-hour Qt build and looks better. Embedded
-  libmpv + libass still to come.
+- [x] **M5** — **native app** (`Tsuzuki.exe`): a Win32 window hosting the
+  interface in a WebView2 control, dark title bar, real icon, no browser
+  chrome. Same engine in-process; the loopback server is only the transport
+  between C++ and the view. Embedded libmpv + libass still to come.
 
 M1 deliberately shells out to `mpv` rather than embedding libmpv: libtorrent
 writes to disk and mpv plays a growing file happily, which keeps the first
@@ -93,12 +93,13 @@ launcher defaults `--save-path` to `%TEMP%	suzuki`; downloads are removed
 after playback unless you pass `--keep`.
 
 ```
-tsuzuki ui                                    # open the browser interface
-tsuzuki search "frieren" --res 1080            # search every source, pick one
-tsuzuki search "frieren" --episode 5           # ...and jump straight to ep 5
-tsuzuki "magnet:?xt=urn:btih:..."              # show the table, pick a file
-tsuzuki "magnet:?..." --episode 5              # play episode 5, or fail loudly
-tsuzuki "magnet:?..." --episode 5 --keep       # don't clean up afterwards
+Tsuzuki.exe                                   # native app window
+tsuzuki-cli ui                                # same UI, in your browser
+tsuzuki-cli search "frieren" --res 1080            # search every source, pick one
+tsuzuki-cli search "frieren" --episode 5           # ...and jump straight to ep 5
+tsuzuki-cli "magnet:?xt=urn:btih:..."              # show the table, pick a file
+tsuzuki-cli "magnet:?..." --episode 5              # play episode 5, or fail loudly
+tsuzuki-cli "magnet:?..." --episode 5 --keep       # don't clean up afterwards
 ```
 
 ## Licence note

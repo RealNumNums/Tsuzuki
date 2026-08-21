@@ -6,6 +6,7 @@
     "curl",
     "nlohmann-json",
     "pugixml",
-    "cpp-httplib"
+    "cpp-httplib",
+    "webview2"
   ]
 }
