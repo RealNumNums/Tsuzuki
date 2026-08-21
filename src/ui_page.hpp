@@ -778,22 +778,30 @@ function applyTheme(name){
 
   html += '<div id="aErr"></div>';
 
-  if(acct.usingBuiltInId){
-    html += '<div class="steps">Using the built-in Tsuzuki client id.</div>';
-  } else if(!acct.hasClientId){
-    // Everything needed, inline. No docs to go read, nothing to type by hand
-    // except one paste.
+  if(!acct.linked){
+    // Both credentials are editable, always. The built-in pair is only a
+    // default, and if it is wrong there has to be a way to correct it without
+    // rebuilding.
     html += '<div class="wiz">'+
-      '<div class="step"><span class="n">1</span><div class="txt">Create an AniList app '+
-        '(any name).</div><button class="small" id="wOpen">Open AniList</button></div>'+
+      '<div class="step"><span class="n">1</span><div class="txt">Create an AniList app, '+
+        'or open the one you already made.</div>'+
+        '<button class="small" id="wOpen">Open AniList</button></div>'+
+
       '<div class="step"><span class="n">2</span><div class="copyrow">'+
         '<code id="wUrl">http://127.0.0.1:7654/auth/anilist</code>'+
         '<button class="small" id="wCopy">Copy</button></div></div>'+
+      '<div class="txt" style="padding-left:34px;margin:-4px 0 8px">'+
+        'This must be the Redirect URL on the AniList client, character for character. '+
+        'A mismatch is the usual cause of a failed link.</div>'+
+
       '<div class="step"><span class="n">3</span><div class="copyrow">'+
-        '<input id="wId" placeholder="Paste the Client ID here" autocomplete="off">'+
-        '</div></div>'+
-      '<div class="txt" style="padding-left:34px">Paste it and linking starts by itself. '+
-        'The client ID is public; the secret is never needed.</div>'+
+        '<input id="wId" placeholder="Client ID" autocomplete="off" value="'+
+          esc(acct.clientId||'')+'"></div></div>'+
+      '<div class="step"><span class="n">4</span><div class="copyrow">'+
+        '<input id="wSecret" type="password" placeholder="Client Secret" autocomplete="off">'+
+        '<button class="small" id="wSave">Save &amp; link</button></div></div>'+
+      '<div class="txt" style="padding-left:34px">Paste these as text rather than reading them '+
+        'off a screenshot - one wrong character reads as "invalid_client".</div>'+
     '</div>';
   }
   html += '</div>';
@@ -859,16 +867,18 @@ function applyTheme(name){
       await navigator.clipboard.writeText($('#wUrl').textContent.trim());
       $('#wCopy').textContent = 'Copied';
       setTimeout(() => { if($('#wCopy')) $('#wCopy').textContent = 'Copy'; }, 1500);
-    }catch(e){ showErr('Could not copy - select the URL and copy it manually.'); }
+    }catch(e){ showErr('Could not copy - select the URL and copy it by hand.'); }
   };
 
-  // Pasting the id is the whole interaction: save it, then start linking.
-  if($('#wId')) $('#wId').oninput = async () => {
-    const id = $('#wId').value.trim();
-    if(!/^[0-9]{3,}$/.test(id)) return;
+  if($('#wSave')) $('#wSave').onclick = async () => {
+    const id = ($('#wId').value || '').trim();
+    const secret = ($('#wSecret').value || '').trim();
+    if(!id){ showErr('Client ID is required.'); return; }
     showErr('');
+    const body = {anilistClientId: id};
+    if(secret) body.anilistClientSecret = secret;
     await fetch('/api/settings', {method:'POST',headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({anilistClientId: id})});
+      body: JSON.stringify(body)});
     startLink();
   };
 
@@ -876,18 +886,22 @@ function applyTheme(name){
     let r = {};
     try{ r = await (await fetch('/api/account/login',{method:'POST'})).json(); }catch(e){}
     if(!r.ok){ showErr(r.error || 'Could not start linking.'); return; }
-    showErr('Approve Tsuzuki in the browser tab that just opened, then come back here.');
+    showErr('Approve Tsuzuki in the browser tab that opened, then come back here.');
     let tries = 0;
     const timer = setInterval(async () => {
       let a = {};
       try{ a = await (await fetch('/api/account')).json(); }catch(e){}
-      if(a.linked || ++tries > 60){ clearInterval(timer); showSettings(); }
+      if(a.linked){ clearInterval(timer); showSettings(); return; }
+      if(++tries > 60){
+        clearInterval(timer);
+        showErr('Never heard back. Check the Redirect URL on the AniList client matches exactly.');
+      }
     }, 2000);
   }
 
   if($('#aIn')) $('#aIn').onclick = async () => {
     if(!acct.hasClientId){
-      showErr('Finish the three steps below first - it takes about 30 seconds.');
+      showErr('Enter the client id below first.');
       if($('#wId')) $('#wId').focus();
       return;
     }

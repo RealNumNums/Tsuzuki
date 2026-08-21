@@ -129,6 +129,7 @@ struct Settings {
 
     // Accounts
     std::string anilistClientId;
+    std::string anilistClientSecret;
     bool syncProgress = true;
 
     // Interface extras
@@ -173,6 +174,7 @@ json settingsToJson(const Settings& s) {
                 {"disableDHT", s.disableDHT},
                 {"disablePeX", s.disablePeX},
                 {"anilistClientId", s.anilistClientId},
+                {"anilistClientSecret", s.anilistClientSecret},
                 {"syncProgress", s.syncProgress},
                 {"uiScale", s.uiScale},
                 {"hideSpoilers", s.hideSpoilers},
@@ -202,6 +204,7 @@ void settingsFromJson(const json& j, Settings& s) {
     if (j.contains("disableDHT") && j["disableDHT"].is_boolean()) s.disableDHT = j["disableDHT"];
     if (j.contains("disablePeX") && j["disablePeX"].is_boolean()) s.disablePeX = j["disablePeX"];
     if (j.contains("anilistClientId") && j["anilistClientId"].is_string()) s.anilistClientId = j["anilistClientId"];
+    if (j.contains("anilistClientSecret") && j["anilistClientSecret"].is_string()) s.anilistClientSecret = j["anilistClientSecret"];
     if (j.contains("syncProgress") && j["syncProgress"].is_boolean()) s.syncProgress = j["syncProgress"];
     if (j.contains("uiScale") && j["uiScale"].is_number()) s.uiScale = j["uiScale"];
     if (j.contains("hideSpoilers") && j["hideSpoilers"].is_boolean()) s.hideSpoilers = j["hideSpoilers"];
@@ -947,27 +950,37 @@ static void installRoutes(httplib::Server& server, Engine& e) {
         res.set_content("{\"ok\":true}", "application/json");
     });
 
-    // The page AniList redirects back to. The token arrives in the URL
-    // fragment, which browsers never send to a server, so a little script has
-    // to hand it over.
-    server.Get("/auth/anilist", [](const httplib::Request&, httplib::Response& res) {
-        res.set_content(
-            "<!doctype html><meta charset=utf-8><title>Tsuzuki</title>"
-            "<style>body{background:#0e0d17;color:#ece9f7;font:15px system-ui;"
-            "display:flex;align-items:center;justify-content:center;height:100vh;margin:0}"
-            "div{text-align:center}b{color:#ff5c8d}</style>"
-            "<div><p id=m>Linking your account...</p></div><script>"
-            "const h=new URLSearchParams(location.hash.slice(1));"
-            "const t=h.get('access_token');"
-            "if(t){fetch('/api/account/token',{method:'POST',"
-            "headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t})})"
-            ".then(()=>{document.getElementById('m').innerHTML="
-            "'<b>Account linked.</b><br>You can close this tab and go back to Tsuzuki.';})"
-            ".catch(()=>{document.getElementById('m').textContent='Could not reach Tsuzuki.';});}"
-            "else{document.getElementById('m').textContent="
-            "'No token came back from AniList. Try linking again.';}"
-            "</script>",
-            "text/html; charset=utf-8");
+    // AniList redirects here with ?code=. Unlike a fragment, a query string
+    // reaches the server, so the exchange happens here rather than in script.
+    server.Get("/auth/anilist", [](const httplib::Request& req, httplib::Response& res) {
+        const Settings cfg = currentSettings();
+        std::string error;
+        bool ok = false;
+
+        if (req.has_param("error")) {
+            error = req.get_param_value("error_description").empty()
+                        ? req.get_param_value("error")
+                        : req.get_param_value("error_description");
+        } else {
+            ok = track::exchangeCode(req.has_param("code") ? req.get_param_value("code") : "",
+                                     track::resolveClientId(cfg.anilistClientId),
+                                     track::resolveClientSecret(cfg.anilistClientSecret),
+                                     7654, error);
+        }
+
+        const std::string body =
+            std::string("<!doctype html><meta charset=utf-8><title>Tsuzuki</title>"
+                        "<style>body{background:#0e0d17;color:#ece9f7;font:15px system-ui;"
+                        "display:flex;align-items:center;justify-content:center;height:100vh;"
+                        "margin:0;text-align:center}b{color:#ff5c8d}"
+                        "code{background:#1f1c34;padding:3px 7px;border-radius:5px;"
+                        "color:#5be9e9;font-size:13px}</style><div>") +
+            (ok ? "<p><b>Account linked.</b><br>You can close this tab and go back to Tsuzuki.</p>"
+                : "<p><b>Linking failed.</b><br>" + error +
+                      "</p><p style='color:#9a94bd;font-size:13px'>Most often the Redirect URL on "
+                      "your AniList client does not match<br><code>http://127.0.0.1:7654/auth/anilist</code></p>") +
+            "</div>";
+        res.set_content(body, "text/html; charset=utf-8");
     });
 
     server.Post("/api/account/token", [](const httplib::Request& req, httplib::Response& res) {
@@ -992,6 +1005,9 @@ static void installRoutes(httplib::Server& server, Engine& e) {
                              {"hasClientId", !track::resolveClientId(cfg.anilistClientId).empty()},
                              {"usingBuiltInId", cfg.anilistClientId.empty() &&
                                                     !track::defaultClientId().empty()},
+                             {"clientId", track::resolveClientId(cfg.anilistClientId)},
+                             {"hasClientSecret",
+                              !track::resolveClientSecret(cfg.anilistClientSecret).empty()},
                              {"syncProgress", cfg.syncProgress}}
                             .dump(),
                         "application/json");

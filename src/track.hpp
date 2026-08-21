@@ -22,20 +22,28 @@ struct Account {
     std::string avatar;
 };
 
-// The client id Tsuzuki ships with. A client id is a public identifier, not a
-// secret - OAuth treats desktop apps as public clients precisely because they
-// cannot keep one - so baking ours in is correct, and means linking is a
-// single click rather than a setup chore for every user.
+// AniList rejects the implicit grant (unsupported_grant_type) - it is
+// deprecated in OAuth 2.1 and they have turned it off - so this uses the
+// authorization code flow. That needs a client secret, which is why the
+// secret exists here at all despite the app being a public client.
 //
-// Empty until a Tsuzuki client is registered at anilist.co/settings/developer
-// with http://127.0.0.1:7654/auth/anilist as its redirect URL.
+// The built-in credentials live in secrets.local.hpp, which is gitignored:
+// the binary carries them so linking is one click, while the public repo
+// carries none. Anyone building from source supplies their own, or enters
+// them in Settings.
 std::string defaultClientId();
+std::string defaultClientSecret();
 
-// Settings override the built-in id; otherwise the built-in one is used.
 std::string resolveClientId(const std::string& fromSettings);
+std::string resolveClientSecret(const std::string& fromSettings);
 
 // URL to open in a browser to start linking. Empty if no client id is available.
 std::string authorizeUrl(const std::string& clientId, int port);
+
+// Swaps the ?code= AniList sends back for an access token. Returns false with
+// `error` set on failure.
+bool exchangeCode(const std::string& code, const std::string& clientId,
+                  const std::string& clientSecret, int port, std::string& error);
 
 void setToken(const std::string& token);
 std::string token();

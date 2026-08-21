@@ -5,3 +5,4 @@ out/
 vcpkg_installed/
 *.user
 downloads/
+secrets.local.hpp

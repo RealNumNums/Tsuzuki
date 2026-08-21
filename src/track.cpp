@@ -9,6 +9,20 @@
 
 #include "http.hpp"
 
+// Optional, gitignored. Defines TSUZUKI_ANILIST_CLIENT_ID and
+// TSUZUKI_ANILIST_CLIENT_SECRET so a built binary can link in one click
+// without those credentials living in a public repository.
+#if __has_include("secrets.local.hpp")
+#include "secrets.local.hpp"
+#endif
+
+#ifndef TSUZUKI_ANILIST_CLIENT_ID
+#define TSUZUKI_ANILIST_CLIENT_ID ""
+#endif
+#ifndef TSUZUKI_ANILIST_CLIENT_SECRET
+#define TSUZUKI_ANILIST_CLIENT_SECRET ""
+#endif
+
 namespace tsuzuki::track {
 namespace {
 
@@ -16,8 +30,7 @@ using nlohmann::json;
 
 constexpr const char* kEndpoint = "https://graphql.anilist.co";
 
-// Registered once for Tsuzuki itself. Public identifier, no secret.
-constexpr const char* kDefaultClientId = "";
+constexpr const char* kTokenEndpoint = "https://anilist.co/api/v2/oauth/token";
 
 std::mutex g_mutex;
 std::string g_token;
@@ -53,21 +66,64 @@ json query(const std::string& gql, const json& variables, const std::string& tok
 
 }  // namespace
 
-std::string defaultClientId() { return kDefaultClientId; }
+std::string defaultClientId() { return TSUZUKI_ANILIST_CLIENT_ID; }
+std::string defaultClientSecret() { return TSUZUKI_ANILIST_CLIENT_SECRET; }
 
 std::string resolveClientId(const std::string& fromSettings) {
-    return fromSettings.empty() ? std::string(kDefaultClientId) : fromSettings;
+    return fromSettings.empty() ? defaultClientId() : fromSettings;
+}
+
+std::string resolveClientSecret(const std::string& fromSettings) {
+    return fromSettings.empty() ? defaultClientSecret() : fromSettings;
+}
+
+std::string redirectUri(int port) {
+    return "http://127.0.0.1:" + std::to_string(port) + "/auth/anilist";
 }
 
 std::string authorizeUrl(const std::string& clientId, int port) {
     if (clientId.empty()) return {};
-    // Implicit grant: AniList hands the token back in the URL fragment, so it
-    // never touches a server and no client secret is needed.
-    const std::string redirect =
-        "http://127.0.0.1:" + std::to_string(port) + "/auth/anilist";
     return "https://anilist.co/api/v2/oauth/authorize?client_id=" +
-           http::urlEncode(clientId) + "&response_type=token&redirect_uri=" +
-           http::urlEncode(redirect);
+           http::urlEncode(clientId) + "&response_type=code&redirect_uri=" +
+           http::urlEncode(redirectUri(port));
+}
+
+bool exchangeCode(const std::string& code, const std::string& clientId,
+                  const std::string& clientSecret, int port, std::string& error) {
+    if (code.empty()) {
+        error = "AniList did not return an authorization code.";
+        return false;
+    }
+    if (clientSecret.empty()) {
+        error = "No client secret available - AniList needs one for this flow.";
+        return false;
+    }
+
+    const json body{{"grant_type", "authorization_code"},
+                    {"client_id", clientId},
+                    {"client_secret", clientSecret},
+                    {"redirect_uri", redirectUri(port)},
+                    {"code", code}};
+
+    const auto res = http::postJson(kTokenEndpoint, body.dump());
+    json j;
+    try {
+        j = json::parse(res.body);
+    } catch (const std::exception&) {
+        error = "AniList returned something unreadable (HTTP " +
+                std::to_string(res.status) + ").";
+        return false;
+    }
+
+    if (j.contains("access_token") && j["access_token"].is_string()) {
+        setToken(j["access_token"].get<std::string>());
+        return true;
+    }
+
+    // Surface AniList's own wording; it is usually the actual problem, most
+    // often a redirect URL that does not match the registered one.
+    error = j.value("hint", j.value("message", j.value("error", "AniList rejected the login.")));
+    return false;
 }
 
 void setToken(const std::string& tok) {
