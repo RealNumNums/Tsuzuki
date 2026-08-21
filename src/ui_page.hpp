@@ -15,7 +15,7 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
   :root{
     --bg:#0e0d17; --panel:#171528; --panel-2:#1f1c34; --line:#2b2745;
     --ink:#ece9f7; --dim:#9a94bd; --pink:#ff5c8d; --pink-soft:#ff8fb3;
-    --cyan:#5be9e9; --gold:#ffd66b; --ok:#53da33;
+    --cyan:#5be9e9; --gold:#ffd66b; --ok:#53da33; --accent:var(--pink);
   }
   *{box-sizing:border-box}
   body{
@@ -23,14 +23,14 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
     color:var(--ink);font:15px/1.5 "Segoe UI",system-ui,sans-serif;min-height:100vh;
   }
   header{
-    display:flex;align-items:center;gap:14px;padding:18px 26px;
+    display:flex;align-items:center;gap:14px;padding:16px 26px;
     border-bottom:1px solid var(--line);position:sticky;top:0;
-    background:rgba(14,13,23,.86);backdrop-filter:blur(10px);z-index:5;
+    background:rgba(14,13,23,.9);backdrop-filter:blur(10px);z-index:20;
   }
-  header .logo{width:38px;height:38px;flex:none}
-  header h1{font-size:19px;margin:0;letter-spacing:.3px}
-  header h1 span{color:var(--dim);font-weight:400;font-size:13px;margin-left:8px}
-  main{max-width:1080px;margin:0 auto;padding:26px}
+  header .logo{width:34px;height:34px;flex:none}
+  header h1{font-size:18px;margin:0;letter-spacing:.3px}
+  header h1 span{color:var(--dim);font-weight:400;font-size:12.5px;margin-left:8px}
+  main{max-width:1100px;margin:0 auto;padding:22px 26px 60px}
   .searchbar{display:flex;gap:10px;margin-bottom:8px;flex-wrap:wrap}
   input,select{
     background:var(--panel);border:1px solid var(--line);color:var(--ink);
@@ -40,60 +40,102 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
   #q{flex:1;min-width:240px}
   button{
     background:linear-gradient(180deg,var(--pink-soft),var(--pink));border:0;color:#2a0d18;
-    font:600 15px/1 "Segoe UI",system-ui,sans-serif;padding:13px 20px;border-radius:10px;
+    font:600 14px/1 "Segoe UI",system-ui,sans-serif;padding:11px 18px;border-radius:9px;
     cursor:pointer;transition:transform .08s ease,filter .15s ease;
   }
   button:hover{filter:brightness(1.08)}
   button:active{transform:translateY(1px)}
-  button.ghost{background:transparent;border:1px solid var(--line);color:var(--dim);font-weight:500}
-  button.ghost:hover{color:var(--ink);border-color:var(--pink)}
-  .hint{color:var(--dim);font-size:13px;margin:2px 0 20px}
+  .hint{color:var(--dim);font-size:13px;margin:2px 0 18px}
+  .back{background:transparent;border:1px solid var(--line);color:var(--dim);font-weight:500;margin-bottom:14px}
+  .back:hover{color:var(--ink);border-color:var(--pink)}
+
+  /* ---- search results ---- */
   .card{
     background:var(--panel);border:1px solid var(--line);border-radius:12px;
     padding:14px 16px;margin-bottom:10px;display:flex;gap:14px;align-items:center;
-    cursor:pointer;transition:border-color .15s ease,background .15s ease,transform .08s ease;
+    cursor:pointer;transition:border-color .15s ease,background .15s ease;
   }
   .card:hover{border-color:var(--pink);background:var(--panel-2)}
-  .card:active{transform:scale(.996)}
   .card .title{flex:1;min-width:0}
   .card .title b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .card .meta{color:var(--dim);font-size:12.5px;margin-top:3px}
-  .badge{
-    font:600 11px/1 "Segoe UI",sans-serif;padding:5px 8px;border-radius:6px;
-    letter-spacing:.4px;flex:none;
-  }
+  .badge{font:600 11px/1 "Segoe UI",sans-serif;padding:5px 8px;border-radius:6px;letter-spacing:.4px;flex:none}
   .b-best{background:rgba(255,214,107,.14);color:var(--gold);border:1px solid rgba(255,214,107,.4)}
   .b-high{background:rgba(83,218,51,.12);color:var(--ok);border:1px solid rgba(83,218,51,.32)}
   .b-med{background:rgba(154,148,189,.12);color:var(--dim);border:1px solid var(--line)}
   .seed{color:var(--ok);font-variant-numeric:tabular-nums;font-size:13px;flex:none;min-width:64px;text-align:right}
   .seed.none{color:var(--dim)}
-  .size{color:var(--dim);font-size:13px;flex:none;min-width:64px;text-align:right;font-variant-numeric:tabular-nums}
+  .size{color:var(--dim);font-size:13px;flex:none;min-width:62px;text-align:right;font-variant-numeric:tabular-nums}
   .src{color:var(--cyan);font-size:11px;opacity:.75}
-  .empty{text-align:center;padding:50px 20px;color:var(--dim)}
-  .empty svg{width:150px;height:auto;opacity:.95;margin-bottom:6px}
-  .empty p{margin:6px 0 0}
-  .row{display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--line)}
-  .row:last-child{border-bottom:0}
-  .row.skip{opacity:.42}
-  .ep{
-    font:600 12px/1 "Segoe UI",sans-serif;background:var(--panel-2);border:1px solid var(--line);
-    padding:6px 9px;border-radius:6px;min-width:56px;text-align:center;flex:none;
+
+  /* ---- show hero ---- */
+  .hero{
+    position:relative;border-radius:14px;overflow:hidden;margin-bottom:18px;
+    border:1px solid var(--line);background:var(--panel);
   }
-  .ep.match{background:rgba(255,92,141,.16);border-color:var(--pink);color:var(--pink-soft)}
-  .fname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px}
-  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-top:14px}
-  .panel h3{margin:0;padding:14px 16px;border-bottom:1px solid var(--line);font-size:14px;font-weight:600}
+  .hero .bg{position:absolute;inset:0;background-size:cover;background-position:center 30%;opacity:.34;filter:saturate(1.1)}
+  .hero .veil{position:absolute;inset:0;background:linear-gradient(90deg,var(--panel) 12%,rgba(23,21,40,.72) 55%,rgba(23,21,40,.35))}
+  .hero .inner{position:relative;display:flex;gap:18px;padding:20px}
+  .hero img.cover{width:104px;height:150px;object-fit:cover;border-radius:10px;flex:none;box-shadow:0 8px 26px rgba(0,0,0,.5)}
+  .hero .who{min-width:0;display:flex;flex-direction:column;justify-content:center}
+  .hero h2{margin:0 0 6px;font-size:22px;line-height:1.25}
+  .hero .facts{color:var(--dim);font-size:13px;margin-bottom:9px}
+  .hero .facts b{color:var(--accent);font-weight:600}
+  .hero p{
+    margin:0;color:var(--dim);font-size:13px;line-height:1.55;
+    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;
+  }
+
+  /* ---- episode cards ---- */
+  .eps{display:grid;grid-template-columns:1fr;gap:9px}
+  .ep{
+    display:flex;gap:14px;align-items:center;background:var(--panel);
+    border:1px solid var(--line);border-radius:12px;padding:10px 14px 10px 10px;
+    transition:border-color .15s ease,background .15s ease;
+  }
+  .ep:hover{border-color:var(--accent);background:var(--panel-2)}
+  .ep .thumb{
+    width:112px;height:63px;border-radius:8px;flex:none;object-fit:cover;
+    background:var(--panel-2) center/cover;position:relative;overflow:hidden;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .ep .thumb span{
+    font:700 19px/1 "Segoe UI",sans-serif;color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.85);
+  }
+  .ep .body{flex:1;min-width:0}
+  .ep .name{font-weight:600;font-size:14.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ep .file{color:var(--dim);font-size:11.5px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chips{display:flex;gap:5px;margin-top:6px;flex-wrap:wrap}
+  .chip{
+    font:600 10px/1 "Segoe UI",sans-serif;padding:4px 7px;border-radius:5px;letter-spacing:.3px;
+    background:rgba(91,233,233,.09);color:var(--cyan);border:1px solid rgba(91,233,233,.24);
+  }
+  .chip.q{background:rgba(255,92,141,.1);color:var(--pink-soft);border-color:rgba(255,92,141,.28)}
+  .ep .right{display:flex;align-items:center;gap:12px;flex:none}
+
+  .extras{margin-top:20px}
+  .extras h4{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px}
+  .extras .ep{opacity:.45}
+  .extras .ep:hover{opacity:.7}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-top:16px}
+  .panel h3{margin:0;padding:13px 16px;border-bottom:1px solid var(--line);font-size:14px;font-weight:600}
   .bar{height:6px;background:var(--panel-2);border-radius:99px;overflow:hidden;margin-top:10px}
-  .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--pink),var(--cyan));width:0;transition:width .4s ease}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--cyan));width:0;transition:width .4s ease}
   .note{padding:14px 16px;color:var(--dim);font-size:13px}
-  .note.warn{color:var(--gold)}
+  .warn{
+    background:rgba(255,214,107,.08);border:1px solid rgba(255,214,107,.3);color:var(--gold);
+    border-radius:10px;padding:12px 14px;font-size:13px;margin-bottom:14px;
+  }
+  .empty{text-align:center;padding:46px 20px;color:var(--dim)}
+  .empty svg{width:150px;height:auto;opacity:.95;margin-bottom:4px}
   .spinner{
     width:15px;height:15px;border:2px solid var(--line);border-top-color:var(--pink);
-    border-radius:50%;animation:spin .7s linear infinite;display:inline-block;vertical-align:-3px;margin-right:7px;
+    border-radius:50%;animation:spin .7s linear infinite;display:inline-block;vertical-align:-3px;margin-right:8px;
   }
   @keyframes spin{to{transform:rotate(360deg)}}
 </style>
-</head>
+)HTMLPAGE"
+    R"HTMLPAGE(</head>
 <body>
 <header>
   <svg class="logo" viewBox="0 0 128 128"><defs>
@@ -110,7 +152,7 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
 <main>
   <div class="searchbar">
     <input id="q" placeholder="Search an anime, or paste a magnet link" autofocus>
-    <input id="ep" type="number" min="1" placeholder="Ep #" style="width:96px">
+    <input id="ep" type="number" min="1" placeholder="Ep #" style="width:92px">
     <select id="res">
       <option value="">Any quality</option>
       <option value="1080">1080p</option>
@@ -120,90 +162,178 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
     <button id="go">Search</button>
   </div>
   <div class="hint">Downloads are deleted after you finish watching. Playback opens in mpv.</div>
-
   <div id="out"></div>
 </main>
 
 <script>
 const $ = s => document.querySelector(s);
 const out = $('#out');
-const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const size = b => { if(!b) return '-'; const u=['B','K','M','G','T']; let i=0,v=b; while(v>=1024&&i<4){v/=1024;i++;} return v.toFixed(v<10&&i>0?1:0)+u[i]; };
 
-function busy(msg){ out.innerHTML = '<div class="empty"><span class="spinner"></span>'+esc(msg)+'</div>'; }
-function mascot(msg){
-  out.innerHTML = '<div class="empty">'+MASCOT+'<p>'+esc(msg)+'</p></div>';
+let lastResults = null, lastAnilistId = null;
+
+function busy(msg){ out.innerHTML = '<div class="empty"><span class="spinner"></span><span id="busytext">'+esc(msg)+'</span></div>'; }
+function mascot(msg){ out.innerHTML = '<div class="empty">'+MASCOT+'<p>'+esc(msg)+'</p></div>'; }
+
+// Release tags pulled straight out of the filename. This is information the
+// torrent already carries and most clients throw away.
+function chipsFor(name){
+  const tests = [
+    [/\b(2160p|4k)\b/i,'4K','q'], [/\b1080p\b/i,'1080p','q'], [/\b720p\b/i,'720p','q'], [/\b480p\b/i,'480p','q'],
+    [/\bremux\b/i,'REMUX',''], [/\b(bd|bdrip|blu-?ray)\b/i,'BD',''], [/\b(web-?dl|webrip)\b/i,'WEB',''],
+    [/\b(hevc|x265|h\.?265)\b/i,'HEVC',''], [/\b(avc|x264|h\.?264)\b/i,'H.264',''], [/\bav1\b/i,'AV1',''],
+    [/\bflac\b/i,'FLAC',''], [/\bopus\b/i,'Opus',''], [/\b(e-?ac-?3|ddp|aac)\b/i,'AAC',''],
+    [/dual[- .]?audio/i,'Dual Audio',''], [/\b10-?bits?\b/i,'10-bit',''],
+  ];
+  const seen = new Set(), out = [];
+  for(const [re,label,cls] of tests){
+    if(re.test(name) && !seen.has(label)){ seen.add(label); out.push('<span class="chip '+cls+'">'+label+'</span>'); }
+  }
+  return out.slice(0,6).join('');
 }
 
-async function search(){
+)HTMLPAGE"
+    R"HTMLPAGE(async function search(){
   const q = $('#q').value.trim();
   if(!q) return;
-  if(q.startsWith('magnet:')){ return openTorrent(q); }
+  if(q.startsWith('magnet:')) return openTorrent(q);
   busy('Searching Nyaa, AnimeTosho, SubsPlease and SeaDex...');
-  const r = await fetch('/api/search?q='+encodeURIComponent(q)+'&res='+encodeURIComponent($('#res').value));
-  const j = await r.json();
-  if(j.error){ mascot(j.error); return; }
-  if(!j.results || !j.results.length){ mascot('Nothing found for "'+q+'".'); return; }
+  let j;
+  try { j = await (await fetch('/api/search?q='+encodeURIComponent(q)+'&res='+encodeURIComponent($('#res').value))).json(); }
+  catch(err){ return mascot('Search failed: '+err.message); }
+  if(j.error) return mascot(j.error);
+  if(!j.results || !j.results.length) return mascot('Nothing found for "'+q+'".');
 
+  lastResults = j; lastAnilistId = j.anilist ? j.anilist.id : null;
+  renderResults();
+}
+
+function renderResults(){
+  const j = lastResults;
   let html = '';
   if(j.anilist) html += '<div class="hint">Matched <b>'+esc(j.anilist.title)+'</b> on AniList &middot; '+
-    (j.anilist.episodes? j.anilist.episodes+' episodes':'ongoing')+'</div>';
+    (j.anilist.episodes ? j.anilist.episodes+' episodes' : 'ongoing')+'</div>';
   for(const x of j.results){
     const cls = x.best ? 'b-best' : (x.accuracy==='high' ? 'b-high' : 'b-med');
-    const lbl = x.best ? 'BEST' : x.accuracy.toUpperCase();
     html += '<div class="card" data-magnet="'+esc(x.magnet)+'">'+
-      '<span class="badge '+cls+'">'+lbl+'</span>'+
-      '<div class="title"><b>'+esc(x.title)+'</b><div class="meta"><span class="src">'+esc(x.source)+'</span></div></div>'+
+      '<span class="badge '+cls+'">'+(x.best?'BEST':x.accuracy.toUpperCase())+'</span>'+
+      '<div class="title"><b>'+esc(x.title)+'</b><div class="src">'+esc(x.source)+'</div></div>'+
       '<div class="seed'+(x.seeders?'':' none')+'">'+(x.seeders? x.seeders+' &#9650;':'&ndash;')+'</div>'+
       '<div class="size">'+size(x.size)+'</div></div>';
   }
   out.innerHTML = html;
-  document.querySelectorAll('.card').forEach(c =>
-    c.onclick = () => openTorrent(c.dataset.magnet));
+  document.querySelectorAll('.card').forEach(c => c.onclick = () => openTorrent(c.dataset.magnet));
 }
 
-async function openTorrent(magnet){
-  busy('Fetching torrent metadata...');
-  const want = $('#ep').value.trim();
-  const r = await fetch('/api/open', {method:'POST',headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({magnet, episode: want? parseInt(want,10) : null})});
-  const j = await r.json();
-  if(j.error){ mascot(j.error); return; }
+// While /api/open blocks on the DHT, poll the engine for live status so the
+// spinner reports peers and elapsed time instead of looking hung.
+let openPoll = null;
+function startOpenPoll(){
+  stopOpenPoll();
+  openPoll = setInterval(async () => {
+    try {
+      const s = await (await fetch('/api/status')).json();
+      const t = $('#busytext');
+      if(t && s.message) t.textContent = s.message;
+    } catch(e){}
+  }, 900);
+}
+function stopOpenPoll(){ if(openPoll){ clearInterval(openPoll); openPoll = null; } }
 
-  let html = '<div class="panel"><h3>'+esc(j.name)+'</h3>';
+async function openTorrent(magnet){
+  busy('Contacting peers for torrent metadata...');
+  startOpenPoll();
+  const want = $('#ep').value.trim();
+  let j;
+  try {
+    j = await (await fetch('/api/open', {method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({magnet, episode: want? parseInt(want,10):null, anilistId: lastAnilistId})})).json();
+  } catch(err){ stopOpenPoll(); return mascot('Could not open that torrent: '+err.message); }
+  stopOpenPoll();
+  if(j.error) return mascot(j.error);
+  renderEpisodes(magnet, j);
+}
+
+function renderEpisodes(magnet, j){
+  const show = j.show || {};
+  const info = j.episodeInfo || {};
+  if(show.color) document.documentElement.style.setProperty('--accent', show.color);
+
+  let html = '<button class="back" id="back">&larr; Back to results</button>';
+
+  if(show.title){
+    html += '<div class="hero">'+
+      (show.banner? '<div class="bg" style="background-image:url('+esc(show.banner)+')"></div>':'')+
+      '<div class="veil"></div><div class="inner">'+
+      (show.cover? '<img class="cover" src="'+esc(show.cover)+'" alt="">':'')+
+      '<div class="who"><h2>'+esc(show.title)+'</h2><div class="facts">'+
+        (show.episodes? '<b>'+show.episodes+'</b> episodes':'ongoing')+
+        (show.duration? ' &middot; ~'+show.duration+' min':'')+
+        ' &middot; '+esc(j.name)+
+      '</div>'+(show.description? '<p>'+esc(show.description)+'</p>':'')+'</div></div></div>';
+  } else {
+    html += '<div class="panel"><h3>'+esc(j.name)+'</h3></div>';
+  }
+
   if(j.refused){
-    html += '<div class="note warn">Episode '+esc(j.wanted)+' is not clearly in this torrent &mdash; '+
-            'nothing was played. Pick a file yourself below.</div>';
+    html += '<div class="warn">Episode '+esc(j.wanted)+' is not clearly in this torrent, so nothing '+
+            'was played. Pick a file below instead.</div>';
   }
-  for(const f of j.files){
-    const cls = f.skipped ? 'row skip' : 'row';
-    const epc = (j.target === f.index) ? 'ep match' : 'ep';
-    const label = f.skipped ? (f.reason||'skip') : (f.episode || '??');
-    html += '<div class="'+cls+'">'+
-      '<span class="'+epc+'">'+esc(label)+'</span>'+
-      '<span class="fname">'+esc(f.name)+'</span>'+
-      '<span class="size">'+size(f.size)+'</span>'+
-      (f.skipped? '' : '<button data-i="'+f.index+'">Play</button>')+
-      '</div>';
+
+  const eps = j.files.filter(f => !f.skipped);
+  const extras = j.files.filter(f => f.skipped);
+
+  html += '<div class="eps">';
+  for(const f of eps){
+    const num = (f.episode||'').replace(/^EP\s*/,'');
+    const meta = info[num] || {};
+    const thumbStyle = meta.thumb ? 'background-image:url('+esc(meta.thumb)+')'
+                     : (show.cover ? 'background-image:url('+esc(show.cover)+');background-position:center 22%' : '');
+    const label = meta.title ? meta.title : (f.episode==='??' ? 'Unrecognised' : 'Episode '+num);
+    const hot = (j.target === f.index) ? ' style="border-color:var(--accent)"' : '';
+    html += '<div class="ep"'+hot+'>'+
+      '<div class="thumb" style="'+thumbStyle+'"><span>'+esc(f.episode||'?')+'</span></div>'+
+      '<div class="body"><div class="name">'+esc(label)+'</div>'+
+        '<div class="file">'+esc(f.name)+'</div>'+
+        '<div class="chips">'+chipsFor(f.name)+'</div></div>'+
+      '<div class="right"><span class="size">'+size(f.size)+'</span>'+
+        '<button data-i="'+f.index+'">Play</button></div></div>';
   }
-  html += '</div><div class="panel" id="status" style="display:none"><h3>Streaming</h3>'+
+  html += '</div>';
+
+  if(extras.length){
+    html += '<div class="extras"><h4>Openings, endings and extras &mdash; not episodes</h4><div class="eps">';
+    for(const f of extras){
+      html += '<div class="ep"><div class="thumb"><span>'+esc(f.reason||'--')+'</span></div>'+
+        '<div class="body"><div class="name">'+esc(f.reason||'Extra')+'</div>'+
+        '<div class="file">'+esc(f.name)+'</div></div>'+
+        '<div class="right"><span class="size">'+size(f.size)+'</span>'+
+        '<button data-i="'+f.index+'">Play</button></div></div>';
+    }
+    html += '</div></div>';
+  }
+
+  html += '<div class="panel" id="status" style="display:none"><h3>Streaming</h3>'+
           '<div class="note"><span id="stext">Starting...</span><div class="bar"><i id="sbar"></i></div></div></div>';
+
   out.innerHTML = html;
-  document.querySelectorAll('.row button').forEach(b =>
-    b.onclick = () => play(magnet, parseInt(b.dataset.i,10)));
+  $('#back').onclick = () => { if(lastResults) renderResults(); else mascot('Search for something to watch.'); };
+  document.querySelectorAll('.ep button').forEach(b => b.onclick = () => play(magnet, parseInt(b.dataset.i,10)));
 }
 
 async function play(magnet, index){
   $('#status').style.display = '';
   $('#stext').textContent = 'Buffering...';
+  $('#status').scrollIntoView({behavior:'smooth', block:'nearest'});
   await fetch('/api/play', {method:'POST',headers:{'Content-Type':'application/json'},
     body: JSON.stringify({magnet, index})});
   poll();
 }
 
 async function poll(){
-  const r = await fetch('/api/status');
-  const j = await r.json();
+  let j;
+  try { j = await (await fetch('/api/status')).json(); } catch(e){ return; }
   if($('#stext')){
     $('#stext').textContent = j.message || '';
     $('#sbar').style.width = (j.progress||0)+'%';
@@ -238,9 +368,14 @@ const MASCOT = `)HTMLPAGE"
 <path d="M93 124 Q100 131 107 124" stroke="#C2687A" stroke-width="2.6" fill="none" stroke-linecap="round"/>
 <path d="M132 60 L132 76 L146 68 Z" fill="url(#mt)"/></svg>`;
 
-// ?q=... runs a search on load, so a search can be bookmarked or linked.
+// ?magnet=... opens a torrent straight away, so a specific release can be
+// linked to. ?q=... runs a search on load.
 const params = new URLSearchParams(location.search);
-if(params.get('q')){
+if(params.get('magnet')){
+  if(params.get('ep')) $('#ep').value = params.get('ep');
+  if(params.get('anilist')) lastAnilistId = parseInt(params.get('anilist'),10);
+  openTorrent(params.get('magnet'));
+} else if(params.get('q')){
   $('#q').value = params.get('q');
   if(params.get('ep')) $('#ep').value = params.get('ep');
   if(params.get('res')) $('#res').value = params.get('res');

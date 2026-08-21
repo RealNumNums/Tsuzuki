@@ -36,8 +36,25 @@ using nlohmann::json;
 
 // One torrent session for the life of the UI, plus whatever torrent is
 // currently open. Guarded because httplib serves requests on many threads.
+static lt::settings_pack fastMetadataSettings() {
+    lt::settings_pack sp;
+    sp.set_bool(lt::settings_pack::enable_dht, true);
+    sp.set_bool(lt::settings_pack::enable_lsd, true);
+    sp.set_bool(lt::settings_pack::enable_upnp, true);
+    sp.set_bool(lt::settings_pack::enable_natpmp, true);
+    // Without bootstrap nodes a cold DHT can take a very long time to find
+    // peers for a magnet, which is most of the "it just spins" complaint.
+    sp.set_str(lt::settings_pack::dht_bootstrap_nodes,
+               "dht.libtorrent.org:25401,router.bittorrent.com:6881,"
+               "router.utorrent.com:6881,dht.transmissionbt.com:6881");
+    sp.set_int(lt::settings_pack::connections_limit, 500);
+    sp.set_int(lt::settings_pack::active_limit, 40);
+    sp.set_int(lt::settings_pack::alert_queue_size, 4000);
+    return sp;
+}
+
 struct Engine {
-    lt::session session;
+    lt::session session{fastMetadataSettings()};
     std::mutex mutex;
 
     std::string savePath;
@@ -109,14 +126,23 @@ bool openTorrent(Engine& e, const std::string& magnet, std::string& err) {
     if (e.handle.is_valid()) e.session.remove_torrent(e.handle);
     e.handle = e.session.add_torrent(std::move(atp));
 
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    const auto started = std::chrono::steady_clock::now();
+    const auto deadline = started + std::chrono::seconds(90);
     while (!e.handle.status().has_metadata) {
         if (std::chrono::steady_clock::now() > deadline) {
-            err = "Timed out fetching torrent metadata (60s). It may have no seeders.";
+            err = "Gave up after 90s fetching torrent metadata - no peers responded. "
+                  "Try a release with more seeders.";
+            e.setMessage("");
             return false;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        const auto secs = std::chrono::duration_cast<std::chrono::seconds>(
+                              std::chrono::steady_clock::now() - started).count();
+        e.setMessage("Fetching torrent metadata - " +
+                     std::to_string(e.handle.status().num_peers) + " peers, " +
+                     std::to_string(secs) + "s");
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
+    e.setMessage("");
 
     e.info = e.handle.torrent_file();
     if (!e.info) {
@@ -259,7 +285,7 @@ static void installRoutes(httplib::Server& server, Engine& e) {
             const auto& m = matches.front();
             query.title = m.preferred.empty() ? q : m.preferred;
             query.anilistId = m.id;
-            reply["anilist"] = {{"title", query.title}, {"episodes", m.episodes}};
+            reply["anilist"] = {{"title", query.title}, {"episodes", m.episodes}, {"id", m.id}};
         }
 
         const std::vector<std::shared_ptr<sources::Source>> all = {
@@ -302,6 +328,25 @@ static void installRoutes(httplib::Server& server, Engine& e) {
             reply["error"] = err;
             res.set_content(reply.dump(), "application/json");
             return;
+        }
+
+        // Artwork and blurb, so the file list is not a bare filename dump.
+        if (in.contains("anilistId") && in["anilistId"].is_number_integer()) {
+            anilist::Details d;
+            if (anilist::details(in["anilistId"].get<int>(), d)) {
+                reply["show"] = {
+                    {"title", d.title},       {"description", d.description},
+                    {"cover", d.coverImage},  {"banner", d.bannerImage},
+                    {"color", d.color},       {"duration", d.duration},
+                    {"episodes", d.episodes},
+                };
+                json eps = json::object();
+                for (const auto& ei : d.episodeInfo) {
+                    eps[std::to_string(ei.number)] = {{"title", ei.title},
+                                                     {"thumb", ei.thumbnail}};
+                }
+                reply["episodeInfo"] = eps;
+            }
         }
 
         reply["name"] = e.info->name();
