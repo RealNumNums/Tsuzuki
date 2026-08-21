@@ -51,6 +51,11 @@ class Ui {
     // Registers a clickable region. `id` only has to be unique within a frame.
     bool clickable(int id, const Rect& r);
     bool isHot(int id) const { return hot_ == id; }
+
+    // Nothing above this line can be clicked. Scrolled content passes under
+    // the header, where it is clipped away visually - it must not keep
+    // taking clicks it no longer appears to be under.
+    float hitTop = 0;
     // 0..1, eased - drives the hover lift without a separate animation system.
     float hover(int id) const;
 

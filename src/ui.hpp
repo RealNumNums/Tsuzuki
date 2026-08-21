@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include <map>
+
 #include "settings.hpp"
 
 namespace tsuzuki::ui {
@@ -46,6 +48,82 @@ std::vector<HistoryItem> history();
 // Settings, for the screen that edits them. applySettings writes to disk and
 // pushes the parts the running session cares about (speed limit, connection
 // cap, DoH resolver) straight into libtorrent.
+// ---- searching -------------------------------------------------------
+//
+// Every one of these blocks on the network, so callers run them off the
+// interface thread and hand the result back when it arrives.
+
+struct Found {
+    std::string title;      // release name, as published
+    std::string magnet;
+    std::string sourceId;
+    std::string accuracy;
+    long long size = 0;
+    int seeders = 0;
+    bool curatedBest = false;  // SeaDex says this is the encode to take
+};
+
+struct SearchOutcome {
+    std::string error;
+    std::string resolvedTitle;  // AniList's canonical title, when it matched
+    int anilistId = 0;
+    int episodes = 0;
+    bool autoSelect = false;
+    std::vector<Found> results;
+};
+
+SearchOutcome search(const std::string& query, int resolution);
+
+// ---- opening a torrent ----------------------------------------------
+
+struct OpenedFile {
+    int index = 0;
+    std::string name;
+    std::string episodeLabel;  // "EP 5", "1-12", "??" or "--"
+    std::string reason;        // why it was skipped, when it was
+    long long size = 0;
+    bool skipped = false;
+    int episodeNumber = 0;     // 0 when unknown or a range
+};
+
+struct EpisodeMeta {
+    std::string title;
+    std::string thumb;
+};
+
+struct OpenOutcome {
+    std::string error;
+    std::string torrentName;
+
+    std::string title, description, cover, banner, color;
+    int episodes = 0, duration = 0, anilistId = 0;
+
+    // The file matching the episode asked for. -1 with refused set means it
+    // was missing or ambiguous - never a different file quietly substituted.
+    int target = -1;
+    bool refused = false;
+    int wanted = 0;
+
+    std::vector<OpenedFile> files;
+    std::map<int, EpisodeMeta> episodeInfo;
+};
+
+OpenOutcome open(const std::string& magnet, int episode, int anilistId);
+
+// resumeFrom: -1 keeps the stored position, 0 starts over, anything else is
+// a number of seconds.
+void play(int index, double resumeFrom);
+void requestStop();
+
+struct Status {
+    bool done = true;
+    bool playing = false;
+    bool videoActive = false;
+    int progress = 0;
+    std::string message;
+};
+Status status();
+
 Settings settings();
 void applySettings(const Settings&);
 

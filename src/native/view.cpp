@@ -108,7 +108,7 @@ void Ui::endFrame() {
 }
 
 bool Ui::clickable(int id, const Rect& r) {
-    const bool over = r.contains(in.mouseX, in.mouseY);
+    const bool over = r.contains(in.mouseX, in.mouseY) && in.mouseY >= hitTop;
     if (over) hot_ = id;
 
     // Ease the hover value towards its target so cards lift smoothly instead
@@ -459,17 +459,27 @@ bool frame(Ui& u, State& st) {
     bool wantMore = false;
     u.beginFrame();
 
-    if (header(u, st) && !st.query.empty()) {
-        st.screen = Screen::Results;
-    }
+    // Content first, clipped to its own area, then the header painted over
+    // the top. Without the clip, a scrolled page drew its rows straight
+    // through the header and the two overlapped.
+    const Rect full = u.c.bounds();
+    u.c.pushClip({0, kHeaderH, full.w, full.h - kHeaderH});
+    u.hitTop = kHeaderH;
 
     switch (st.screen) {
         case Screen::Home: wantMore = home(u, st); break;
         case Screen::Settings: wantMore = settingsScreen(u, st); break;
         default:
             u.c.text(L"Coming next: results, episodes, settings.",
-                     {kPad, kHeaderH + 60, u.c.bounds().w - kPad * 2, 24}, dim, f(14));
+                     {kPad, kHeaderH + 60, full.w - kPad * 2, 24}, dim, f(14));
             break;
+    }
+
+    u.c.popClip();
+    u.hitTop = 0;
+
+    if (header(u, st) && !st.query.empty()) {
+        st.screen = Screen::Results;
     }
 
     u.endFrame();

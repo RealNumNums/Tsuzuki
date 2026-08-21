@@ -834,6 +834,171 @@ void playFile(Engine& e, int index) {
 
 }  // namespace
 
+SearchOutcome search(const std::string& q, int resolution) {
+    SearchOutcome out;
+    if (q.empty()) {
+        out.error = "Type something to search for.";
+        return out;
+    }
+
+    sources::Query query;
+    query.title = q;
+    if (resolution > 0) query.resolution = resolution;
+
+    const Settings cfg = currentSettings();
+    out.autoSelect = cfg.autoSelect;
+
+    // Resolve the title through AniList first: the canonical romaji name is
+    // what release groups actually use, and the id is what SeaDex is keyed on.
+    auto matches = anilist::search(q);
+    if (!cfg.showAdult) {
+        matches.erase(std::remove_if(matches.begin(), matches.end(),
+                                     [](const anilist::Media& m) { return m.isAdult; }),
+                      matches.end());
+    }
+    if (!matches.empty()) {
+        const auto& m = matches.front();
+        query.title = m.preferred.empty() ? q : m.preferred;
+        query.anilistId = m.id;
+        out.resolvedTitle = query.title;
+        out.anilistId = m.id;
+        out.episodes = m.episodes;
+    }
+
+    const std::vector<std::shared_ptr<sources::Source>> all = {
+        sources::makeSeaDex(), sources::makeAnimeTosho(), sources::makeNyaa(),
+        sources::makeSubsPlease(),
+    };
+    auto results = sources::searchAll(all, query);
+
+    // Lookup preference re-orders what searchAll produced. Curated picks stay
+    // first regardless - that is the one signal worth more than any of these
+    // heuristics.
+    if (cfg.lookupPreference == "size") {
+        std::stable_sort(results.begin(), results.end(),
+                         [](const sources::Result& a, const sources::Result& b) {
+                             if (a.curatedBest != b.curatedBest) return a.curatedBest;
+                             if (a.size == 0 || b.size == 0) return a.size > b.size;
+                             return a.size < b.size;
+                         });
+    } else if (cfg.lookupPreference == "availability") {
+        std::stable_sort(results.begin(), results.end(),
+                         [](const sources::Result& a, const sources::Result& b) {
+                             if (a.curatedBest != b.curatedBest) return a.curatedBest;
+                             return a.seeders > b.seeders;
+                         });
+    }
+
+    for (const auto& r : results) {
+        Found f;
+        f.title = r.title;
+        f.magnet = r.magnet;
+        f.sourceId = r.sourceId;
+        f.accuracy = accuracyName(r.accuracy);
+        f.size = r.size;
+        f.seeders = r.seeders;
+        f.curatedBest = r.curatedBest;
+        out.results.push_back(std::move(f));
+        if (out.results.size() >= 40) break;
+    }
+    return out;
+}
+
+OpenOutcome open(const std::string& magnet, int episode, int anilistId) {
+    OpenOutcome out;
+    Engine& e = engine();
+    std::lock_guard<std::mutex> lock(e.mutex);
+
+    std::string err;
+    if (!openTorrent(e, magnet, err)) {
+        out.error = err;
+        return out;
+    }
+
+    // Artwork and blurb, so the file list is not a bare filename dump. An id
+    // supplied by the caller wins; otherwise use the one worked out from the
+    // release name.
+    const int wantId = anilistId > 0 ? anilistId : e.anilistId;
+    if (wantId > 0) {
+        anilist::Details d;
+        if (anilist::details(wantId, d)) {
+            out.title = d.title;
+            out.description = d.description;
+            out.cover = d.coverImage;
+            out.banner = d.bannerImage;
+            out.color = d.color;
+            out.duration = d.duration;
+            out.episodes = d.episodes;
+            out.anilistId = d.id;
+            for (const auto& ei : d.episodeInfo) {
+                out.episodeInfo[ei.number] = EpisodeMeta{ei.title, ei.thumbnail};
+            }
+            e.runtimeMinutes = d.duration;
+            e.totalEpisodes = d.episodes;
+            e.anilistId = d.id;
+            e.showTitle = d.title;
+            e.showCover = d.coverImage;
+        }
+    }
+
+    out.torrentName = e.info->name();
+    for (const auto& f : e.files) {
+        OpenedFile of;
+        of.index = f.index;
+        of.name = f.name;
+        of.size = f.size;
+        of.skipped = f.excluded;
+        of.reason = f.excludeReason;
+        if (f.excluded) {
+            of.episodeLabel = "--";
+        } else if (f.episode.isRange()) {
+            of.episodeLabel =
+                std::to_string(f.episode.from) + "-" + std::to_string(f.episode.to);
+        } else if (f.episode.valid) {
+            of.episodeLabel = "EP " + std::to_string(f.episode.from);
+            of.episodeNumber = f.episode.from;
+        } else {
+            of.episodeLabel = "??";
+        }
+        out.files.push_back(std::move(of));
+    }
+
+    // Same rule as the CLI: a missing or ambiguous episode is reported, never
+    // silently swapped for a different file.
+    if (episode > 0) {
+        out.wanted = episode;
+        if (const ScannedFile* hit = selectEpisode(e.files, episode)) {
+            out.target = hit->index;
+        } else {
+            out.refused = true;
+        }
+    }
+    return out;
+}
+
+void play(int index, double resumeFrom) {
+    Engine& e = engine();
+    if (e.playing) return;
+    e.resumeFrom = resumeFrom;
+    std::thread([&e, index] {
+        std::lock_guard<std::mutex> lock(e.mutex);
+        playFile(e, index);
+    }).detach();
+}
+
+void requestStop() { engine().stopRequested = true; }
+
+Status status() {
+    Engine& e = engine();
+    Status s;
+    s.done = e.done;
+    s.playing = e.playing;
+    s.videoActive = e.videoActive;
+    s.progress = e.progress;
+    s.message = e.getMessage();
+    return s;
+}
+
 Settings settings() { return currentSettings(); }
 
 void applySettings(const Settings& next) {
