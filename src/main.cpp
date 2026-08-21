@@ -16,10 +16,12 @@
 #include <libtorrent/torrent_info.hpp>
 #include <libtorrent/torrent_status.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>

@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
