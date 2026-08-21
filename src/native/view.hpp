@@ -117,6 +117,10 @@ struct State {
     bool searchDone = false;
     ui::OpenOutcome opened;
     bool openDone = false;
+
+    // Where to go back to once playback ends. Playback takes over the whole
+    // window, so the screen behind it has to be remembered.
+Screen beforePlayer = Screen::Home;
 };
 
 // Draws the current screen. Returns true if another frame is wanted soon
@@ -129,6 +133,9 @@ bool settingsScreen(Ui&, State&);
 // Defined in browse_screens.cpp.
 bool resultsScreen(Ui&, State&);
 bool episodesScreen(Ui&, State&);
+
+// Defined in player_strip.cpp.
+bool playerStrip(Ui&, State&);
 
 // Shared bits the screens use.
 std::wstring widen(const std::string&);

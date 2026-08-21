@@ -39,6 +39,7 @@ add_library(tsuzuki_core STATIC
   src/native/view.cpp
   src/native/settings_screen.cpp
   src/native/browse_screens.cpp
+  src/native/player_strip.cpp
   src/native/async.cpp
 )
 target_include_directories(tsuzuki_core PUBLIC src)
@@ -76,6 +77,13 @@ if(WIN32)
     windowscodecs
   )
   set_target_properties(tsuzuki-app PROPERTIES OUTPUT_NAME "Tsuzuki")
+endif()
+
+# windows.h defines min and max as macros, which breaks every std::min in the
+# native interface. NOMINMAX has to be set before any windows.h is included, so
+# it goes here rather than in a header.
+if(WIN32)
+  target_compile_definitions(tsuzuki_core PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
 if(MSVC)

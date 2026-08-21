@@ -468,6 +468,13 @@ bool frame(Ui& u, State& st) {
     bool wantMore = false;
     u.beginFrame();
 
+    if (st.screen == Screen::Player) {
+        const bool more = playerStrip(u, st);
+        u.contentHeight = 0;
+        u.endFrame();
+        return more;
+    }
+
     // Content first, clipped to its own area, then the header painted over
     // the top. Without the clip, a scrolled page drew its rows straight
     // through the header and the two overlapped.

@@ -19,7 +19,11 @@
 
 #include <WebView2.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 
 #include "native/gfx.hpp"
@@ -53,6 +57,7 @@ HWND g_main = nullptr;
 constexpr UINT WM_PLAYBACK = WM_APP + 1;
 constexpr UINT WM_IMAGE_READY = WM_APP + 4;
 constexpr UINT_PTR kAnimTimer = 1;
+constexpr UINT_PTR kOverlayTimer = 2;
 
 tsuzuki::gfx::Canvas g_canvas;
 tsuzuki::view::State g_state;
@@ -62,6 +67,26 @@ tsuzuki::view::Input g_input;
 // each frame reset both, so a press and its release landed on different
 // objects and no click was ever recognised.
 tsuzuki::view::Ui g_ui(g_canvas, g_input);
+
+// The control bar floats above the picture in a child window of its own.
+// mpv renders into a sibling child window, and a child window always
+// composites over its parent - Direct2D drawn on the parent simply cannot
+// appear on top of it. A second child, layered so it can fade, can.
+HWND g_overlay = nullptr;
+tsuzuki::gfx::Canvas g_overlayCanvas;
+tsuzuki::view::Ui g_overlayUi(g_overlayCanvas, g_input);
+// How far the bar is out: 0 fully tucked below the bottom edge, 1 fully up.
+// It slides rather than fades because a layered child window refuses
+// SetLayeredWindowAttributes here (error 87), and sliding reads just as well
+// over video anyway.
+float g_barShow = 0.0f;
+DWORD g_lastActivity = 0;     // when the pointer last moved
+POINT g_lastPointer{-1, -1};
+
+constexpr int kBarH = 84;
+constexpr int kBarMaxW = 940;
+constexpr int kBarLift = 28;  // gap between the bar and the bottom edge
+constexpr DWORD kIdleHideMs = 2600;
 bool g_playing = false;
 bool g_animating = false;
 
@@ -73,6 +98,36 @@ void onPlaybackActive(bool active) {
 // Height of the control strip shown under the video while something plays.
 constexpr int kControlBar = 92;
 
+// The bar is a rounded pill centred over the bottom of the picture. The
+// window region does the rounding, because a layered window with uniform
+// alpha cannot round its own corners by drawing.
+void layoutOverlay(HWND hwnd) {
+    if (!g_overlay) return;
+    RECT b{};
+    GetClientRect(hwnd, &b);
+    const int w = b.right - b.left;
+    const int h = b.bottom - b.top;
+
+    const float scale = g_canvas.dpiScale();
+    const int barH = static_cast<int>(kBarH * scale);
+    const int barW =
+        (std::min)(static_cast<int>(kBarMaxW * scale), w - static_cast<int>(60 * scale));
+    const int x = (w - barW) / 2;
+
+    // Resting place, then pushed down by however much of the slide is left.
+    // A child window is clipped to its parent, so the part below the bottom
+    // edge simply is not drawn - no masking needed.
+    const int restY = h - barH - static_cast<int>(kBarLift * scale);
+    const int hiddenY = h + 4;
+    const int y = static_cast<int>(hiddenY + (restY - hiddenY) * g_barShow);
+
+    MoveWindow(g_overlay, x, y, barW, barH, FALSE);
+    HRGN rgn = CreateRoundRectRgn(0, 0, barW + 1, barH + 1,
+                                  static_cast<int>(18 * scale), static_cast<int>(18 * scale));
+    SetWindowRgn(g_overlay, rgn, TRUE);  // the window now owns the region
+    g_overlayCanvas.resize(0, 0);
+}
+
 void layoutVideo(HWND hwnd, bool playing) {
     RECT b{};
     GetClientRect(hwnd, &b);
@@ -80,13 +135,72 @@ void layoutVideo(HWND hwnd, bool playing) {
     const int h = b.bottom - b.top;
 
     if (playing && g_video) {
-        const int videoH = h > kControlBar ? h - kControlBar : h;
-        MoveWindow(g_video, 0, 0, w, videoH, TRUE);
+        // The whole client area: nothing is reserved for controls any more,
+        // so hiding them gives the picture the entire window.
+        MoveWindow(g_video, 0, 0, w, h, TRUE);
         ShowWindow(g_video, SW_SHOW);
-    } else if (g_video) {
-        ShowWindow(g_video, SW_HIDE);
+        layoutOverlay(hwnd);
+    } else {
+        if (g_video) ShowWindow(g_video, SW_HIDE);
+        if (g_overlay) ShowWindow(g_overlay, SW_HIDE);
+        g_barShow = 0.0f;
     }
     InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+// Fade towards shown or hidden. Shown while the pointer has moved recently,
+// or whenever it is over the bar itself - grabbing the scrubber must not
+// make the thing you are aiming at disappear.
+void updateOverlay(HWND hwnd) {
+    if (!g_overlay || !g_playing) return;
+
+    POINT p{};
+    GetCursorPos(&p);
+    if (std::abs(p.x - g_lastPointer.x) > 2 || std::abs(p.y - g_lastPointer.y) > 2) {
+        g_lastPointer = p;
+        g_lastActivity = GetTickCount();
+    }
+
+    RECT bar{};
+    GetWindowRect(g_overlay, &bar);
+    const bool overBar = p.x >= bar.left && p.x < bar.right && p.y >= bar.top && p.y < bar.bottom;
+    const bool recent = GetTickCount() - g_lastActivity < kIdleHideMs;
+    const float target = (overBar || recent) ? 1.0f : 0.0f;
+
+    const float delta = target - g_barShow;
+    if (std::fabs(delta) < 0.004f) {
+        if (g_barShow == target) return;  // settled; nothing to move
+        g_barShow = target;
+    } else {
+        g_barShow += delta * 0.2f;
+    }
+
+    if (g_barShow <= 0.004f) {
+        g_barShow = 0.0f;
+        ShowWindow(g_overlay, SW_HIDE);
+        return;
+    }
+
+    layoutOverlay(hwnd);
+    if (!IsWindowVisible(g_overlay)) {
+        // NOACTIVATE, or showing the bar would steal focus from the video.
+        ShowWindow(g_overlay, SW_SHOWNOACTIVATE);
+        SetWindowPos(g_overlay, HWND_TOP, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+    InvalidateRect(g_overlay, nullptr, FALSE);
+}
+
+void renderOverlay() {
+    using namespace tsuzuki;
+    if (!g_overlayCanvas.begin(gfx::rgb(0x0E0E14))) return;
+    g_overlayUi.beginFrame();
+    view::playerStrip(g_overlayUi, g_state);
+    g_overlayUi.endFrame();
+    g_overlayCanvas.end();
+
+    g_input.mousePressed = false;
+    g_input.mouseReleased = false;
 }
 
 void render(HWND hwnd) {
@@ -96,13 +210,16 @@ void render(HWND hwnd) {
 
     if (!g_canvas.begin(gfx::theme::bg)) return;
 
+    // The picture covers the whole client area while it plays, and the
+    // controls live in their own window, so there is nothing to draw here.
+    if (g_playing) {
+        g_canvas.end();
+        return;
+    }
+
     // While the video is up, the interface is only the strip underneath it -
     // the picture belongs to a child window and must not be painted over.
     const gfx::Rect full = g_canvas.bounds();
-    if (g_playing) {
-        const float barTop = full.h - kControlBar;
-        g_canvas.pushClip({0, barTop, full.w, static_cast<float>(kControlBar)});
-    }
 
     const int idx = static_cast<int>(g_state.screen);
 
@@ -131,7 +248,6 @@ void render(HWND hwnd) {
     // recorded for the next wheel event rather than used to correct this one.
     g_state.contentH[idx] = g_ui.contentHeight;
 
-    if (g_playing) g_canvas.popClip();
     g_canvas.end();
 
     // Input is edge-triggered: consumed once the frame that saw it is done.
@@ -171,6 +287,67 @@ void useDarkTitleBar(HWND hwnd) {
     DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
 }
 
+// Mouse handling for the control bar. Coordinates arrive relative to the bar
+// itself, which is exactly what playerStrip lays out against.
+LRESULT CALLBACK OverlayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            BeginPaint(hwnd, &ps);
+            renderOverlay();
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+
+        case WM_ERASEBKGND:
+            return 1;
+
+        case WM_MOUSEMOVE: {
+            const float scale = g_overlayCanvas.dpiScale();
+            g_input.mouseX = static_cast<float>(GET_X_LPARAM(lp)) / scale;
+            g_input.mouseY = static_cast<float>(GET_Y_LPARAM(lp)) / scale;
+            g_lastActivity = GetTickCount();
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+
+        case WM_LBUTTONDOWN:
+            SetCapture(hwnd);
+            g_input.mouseDown = true;
+            g_input.mousePressed = true;
+            g_lastActivity = GetTickCount();
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+
+        case WM_LBUTTONUP:
+            ReleaseCapture();
+            g_input.mouseDown = false;
+            g_input.mouseReleased = true;
+            g_lastActivity = GetTickCount();
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+
+        // Never take focus: clicking a control must leave the keyboard with
+        // the video, and the bar must not flash the title bar inactive.
+        case WM_MOUSEACTIVATE:
+            return MA_NOACTIVATE;
+
+        default:
+            break;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+void logLine(const char* what, unsigned long code) {
+    char path[MAX_PATH] = {};
+    if (!GetEnvironmentVariableA("LOCALAPPDATA", path, MAX_PATH)) return;
+    strcat_s(path, "\\Tsuzuki\\startup.log");
+    FILE* f = nullptr;
+    if (fopen_s(&f, path, "a") != 0 || !f) return;
+    fprintf(f, "%s: %lu\n", what, code);
+    fclose(f);
+}
+
 void openAuthWindow(HINSTANCE instance, HWND owner);
 void closeAuthWindow();
 
@@ -179,6 +356,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_SIZE:
             g_canvas.resize(LOWORD(lp), HIWORD(lp));
             layoutVideo(hwnd, g_playing);
+            if (g_playing) layoutOverlay(hwnd);
             return 0;
 
         case WM_DPICHANGED: {
@@ -204,6 +382,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_TIMER:
             if (wp == kAnimTimer) {
                 InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (wp == kOverlayTimer) {
+                updateOverlay(hwnd);
                 return 0;
             }
             break;
@@ -282,7 +464,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (wp == VK_END) g_state.scrollTarget[idx] = g_state.contentH[idx];
             }
             if (wp == VK_ESCAPE) {
-                g_state.screen = tsuzuki::view::Screen::Home;
+                if (g_playing) {
+                    tsuzuki::ui::requestStop();
+                } else {
+                    g_state.screen = tsuzuki::view::Screen::Home;
+                }
             }
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
@@ -290,8 +476,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
         case WM_PLAYBACK: {
             g_playing = wp != 0;
+            if (g_playing) {
+                // Remember where we were; the strip replaces the whole
+                // interface while the picture is up.
+                if (g_state.screen != tsuzuki::view::Screen::Player) {
+                    g_state.beforePlayer = g_state.screen;
+                }
+                g_state.screen = tsuzuki::view::Screen::Player;
+            } else if (g_state.screen == tsuzuki::view::Screen::Player) {
+                g_state.screen = g_state.beforePlayer;
+            }
             layoutVideo(hwnd, g_playing);
-            if (g_playing) SetFocus(g_video);
+            if (g_playing) {
+                SetFocus(g_video);
+                g_lastActivity = GetTickCount();
+                g_barShow = 0.0f;
+                SetTimer(hwnd, kOverlayTimer, 33, nullptr);
+            } else {
+                KillTimer(hwnd, kOverlayTimer);
+            }
             return 0;
         }
 
@@ -313,7 +516,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
 
         case WM_DESTROY:
+            tsuzuki::async::shutdown();
             tsuzuki::images::stop();
+            g_overlayCanvas.detach();
             g_canvas.detach();
             // Take the downloads with us on the way out.
             tsuzuki::ui::shutdown();
@@ -504,6 +709,25 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int showCmd) {
     RegisterClassExW(&vc);
     g_video = CreateWindowExW(0, L"TsuzukiVideo", nullptr, WS_CHILD | WS_CLIPCHILDREN, 0, 0, 0, 0,
                               hwnd, nullptr, instance, nullptr);
+    // Control bar: a layered child so it can fade, created after the video
+    // window so it sits above it in the sibling z-order.
+    WNDCLASSEXW oc{};
+    oc.cbSize = sizeof(oc);
+    oc.lpfnWndProc = OverlayProc;
+    oc.hInstance = instance;
+    oc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    oc.lpszClassName = L"TsuzukiControls";
+    if (!RegisterClassExW(&oc)) logLine("RegisterClassExW(controls)", GetLastError());
+
+    g_overlay = CreateWindowExW(0, L"TsuzukiControls", nullptr,
+                                WS_CHILD | WS_CLIPCHILDREN, 0, 0, 320, 92, hwnd, nullptr,
+                                instance, nullptr);
+    if (!g_overlay) {
+        logLine("CreateWindowExW(controls)", GetLastError());
+    } else if (!g_overlayCanvas.attach(g_overlay)) {
+        logLine("overlay canvas attach failed", 0);
+    }
+
     tsuzuki::ui::setVideoHost(g_video, onPlaybackActive);
     tsuzuki::ui::setAuthHook([](const char* url) {
         const int n = MultiByteToWideChar(CP_UTF8, 0, url, -1, nullptr, 0);

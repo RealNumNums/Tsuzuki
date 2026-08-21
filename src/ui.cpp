@@ -339,6 +339,22 @@ const char* accuracyName(sources::Accuracy a) {
 }
 
 // Opens the torrent and scans it. Returns false with `err` set on failure.
+// Put the torrent back to wanting nothing at all.
+//
+// force_recheck rebuilds the piece picker, and the per-file priorities set
+// before it do not survive that - the torrent comes back wanting every file
+// at default priority. Left open on the episode list afterwards, a 37 episode
+// batch quietly pulled the entire 5.8GB pack. Upload mode is the belt to the
+// priorities' braces: it stops requests outright, whatever the picker thinks.
+void wantNothing(Engine& e) {
+    if (!e.handle.is_valid() || !e.info) return;
+    const lt::file_storage& fs = e.info->layout();
+    for (int i = 0; i < fs.num_files(); ++i) {
+        e.handle.file_priority(lt::file_index_t{i}, lt::dont_download);
+    }
+    e.handle.set_flags(lt::torrent_flags::upload_mode);
+}
+
 bool openTorrent(Engine& e, const std::string& magnet, std::string& err) {
     if (e.openMagnet == magnet && e.info) return true;  // already open
 
@@ -601,7 +617,7 @@ void playFile(Engine& e, int index) {
         // mpv draws straight into our window, so there is no second window and
         // no taskbar entry - it looks and behaves like a built-in player.
         cmd += " --wid=" + std::to_string(reinterpret_cast<std::uintptr_t>(g_videoHost));
-        cmd += " --no-border --osc=yes --keep-open=no";
+        cmd += " --no-border --osc=no --keep-open=no";
     }
     cmd += " --input-ipc-server=" + player::pipeName();
     if (!cfg.audioLang.empty()) cmd += " --alang=" + cfg.audioLang;
@@ -749,6 +765,8 @@ void playFile(Engine& e, int index) {
 
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+    // Nothing is being watched any more, so nothing should still be arriving.
+    wantNothing(e);
     e.videoActive = false;
     discord::clear();
     if (g_playbackHook) g_playbackHook(false);
@@ -822,6 +840,10 @@ void playFile(Engine& e, int index) {
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
+
+        // The recheck has thrown the priorities away; put them back before
+        // libtorrent has a chance to act on the defaults.
+        wantNothing(e);
     }
 
     e.setMessage(removed ? "Episode removed. Pick another one."
@@ -997,6 +1019,30 @@ Status status() {
     s.progress = e.progress;
     s.message = e.getMessage();
     return s;
+}
+
+// Tidy up after a session that did not get to finish - a crash, a kill, a
+// power cut. libtorrent leaves a .parts file holding partial pieces, and
+// removing a video leaves its folder behind. Neither is any use once the
+// torrent they belonged to is gone.
+//
+// Deliberately conservative: only .parts files and empty directories. A
+// leftover video might be one someone kept on purpose with
+// delete-after-watching turned off, and deleting that would be the exact
+// mistake this project exists to avoid.
+void sweepStale(const std::string& savePath) {
+    std::error_code ec;
+    if (!std::filesystem::exists(savePath, ec)) return;
+
+    for (const auto& entry : std::filesystem::directory_iterator(savePath, ec)) {
+        if (ec) return;
+        const auto path = entry.path();
+        if (entry.is_regular_file(ec) && path.extension() == ".parts") {
+            std::filesystem::remove(path, ec);
+        } else if (entry.is_directory(ec) && std::filesystem::is_empty(path, ec)) {
+            std::filesystem::remove(path, ec);
+        }
+    }
 }
 
 Settings settings() { return currentSettings(); }
@@ -1664,6 +1710,7 @@ bool startBackground(int port, const std::string& savePath) {
     loadSettings();
     track::load();
     library::start();
+    sweepStale(e.savePath);
     {
         const Settings cfg = currentSettings();
         if (!cfg.savePath.empty()) e.savePath = cfg.savePath;
