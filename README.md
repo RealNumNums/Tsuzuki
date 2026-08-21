@@ -54,7 +54,10 @@ is reported, not papered over.
 ## Roadmap
 
 - [x] **M0** — scaffold, build config
-- [ ] **M1** — magnet → file/episode table → pick → sequential stream → mpv
+- [x] **M1** — magnet → file/episode table → pick → sequential stream → mpv
+  - verified end to end against a public-domain magnet: metadata fetch,
+    video filtering, Anitomy mapping, refuse-to-guess (exit 2), head+tail
+    buffering, and mpv playback while still downloading
 - [ ] **M2** — native torrent sources (Nyaa, SeaDex, AnimeTosho, nekoBT, SubsPlease)
 - [ ] **M3** — AniList metadata; mappings cached by `(infohash, file_index)` and user-correctable
 - [ ] **M4** — verified delete-on-exit

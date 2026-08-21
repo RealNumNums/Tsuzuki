@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -59,6 +60,26 @@ std::optional<Args> parseArgs(int argc, char** argv) {
 void usage() {
     std::cout << "usage: tsuzuki <magnet-or-torrent> [--episode N] "
                  "[--save-path DIR] [--keep]\n";
+}
+
+// Installers rarely put mpv on PATH (winget's shinchiro.mpv drops it in
+// "Program Files\MPV Player"), so look in the usual places before falling
+// back to a bare PATH lookup. Override with TSUZUKI_MPV.
+std::string findMpv() {
+    if (const char* env = std::getenv("TSUZUKI_MPV")) {
+        if (*env) return env;
+    }
+    static const char* candidates[] = {
+        "C:/Program Files/MPV Player/mpv.exe",
+        "C:/Program Files/mpv/mpv.exe",
+        "C:/Program Files (x86)/MPV Player/mpv.exe",
+        "C:/Program Files (x86)/mpv/mpv.exe",
+    };
+    for (const char* c : candidates) {
+        std::error_code ec;
+        if (std::filesystem::exists(c, ec)) return c;
+    }
+    return "mpv";
 }
 
 }  // namespace
@@ -150,23 +171,54 @@ int main(int argc, char** argv) {
     handle.unset_flags(lt::torrent_flags::upload_mode);
     handle.set_flags(lt::torrent_flags::sequential_download);
 
+    // An MP4's moov atom (the index) usually sits at the END of the file, so a
+    // player cannot parse the container until the tail arrives - no amount of
+    // head buffering helps. Streaming clients therefore fetch both ends first.
+    // Waiting on bytes-downloaded is also wrong: file_progress counts bytes
+    // anywhere in the file, not a contiguous run from the start.
     constexpr std::int64_t kBufferBytes = 24 * 1024 * 1024;
-    const std::int64_t target = std::min<std::int64_t>(kBufferBytes, chosen->size);
+    constexpr int kTailPieces = 4;
 
-    std::cout << "buffering";
+    const lt::file_index_t fidx{chosen->index};
+    const int pieceLen = info->piece_length();
+    const int firstPiece = static_cast<int>(info->map_file(fidx, 0, 0).piece);
+    const int lastPiece = static_cast<int>(
+        info->map_file(fidx, std::max<std::int64_t>(chosen->size - 1, 0), 0).piece);
+
+    const int headPieces =
+        std::max(1, static_cast<int>((std::min(kBufferBytes, chosen->size) + pieceLen - 1) / pieceLen));
+
+    std::vector<int> needed;
+    for (int p = firstPiece; p <= std::min(firstPiece + headPieces - 1, lastPiece); ++p) {
+        needed.push_back(p);
+    }
+    for (int p = std::max(lastPiece - kTailPieces + 1, firstPiece); p <= lastPiece; ++p) {
+        if (std::find(needed.begin(), needed.end(), p) == needed.end()) needed.push_back(p);
+    }
+    for (const int p : needed) {
+        handle.piece_priority(lt::piece_index_t{p}, lt::top_priority);
+        handle.set_piece_deadline(lt::piece_index_t{p}, 0);
+    }
+
+    std::cout << "buffering head+tail (" << needed.size() << " pieces)";
     for (;;) {
-        std::vector<std::int64_t> progress;
-        handle.file_progress(progress);
-        const std::int64_t got =
-            (std::size_t)chosen->index < progress.size() ? progress[chosen->index] : 0;
-        if (got >= target) break;
+        bool ready = true;
+        for (const int p : needed) {
+            if (!handle.have_piece(lt::piece_index_t{p})) {
+                ready = false;
+                break;
+            }
+        }
+        if (ready) break;
         std::cout << "." << std::flush;
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
     std::cout << " ok\n";
 
     const std::string path = args->savePath + "/" + chosen->path;
-    const std::string cmd = "mpv \"" + path + "\"";
+    // cmd.exe strips the outer pair of quotes, so when the executable path
+    // itself contains spaces the whole command needs wrapping a second time.
+    const std::string cmd = "\"\"" + findMpv() + "\" \"" + path + "\"\"";
     std::cout << "launching: " << cmd << "\n";
     std::system(cmd.c_str());
 
