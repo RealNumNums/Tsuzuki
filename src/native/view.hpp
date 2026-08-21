@@ -88,7 +88,13 @@ struct State {
     int resumeEpisode = 0;
     int resumeIndex = -1;
 
-    float scroll[6] = {0, 0, 0, 0, 0, 0};  // one per screen
+    // Scrolling runs on two numbers per screen: where the wheel has asked to
+    // be (target) and where the view actually is (scroll), which eases
+    // towards it. contentH is the last measured height, kept so a wheel
+    // event can be clamped the moment it arrives rather than a frame later.
+    float scroll[6] = {0, 0, 0, 0, 0, 0};
+    float scrollTarget[6] = {0, 0, 0, 0, 0, 0};
+    float contentH[6] = {0, 0, 0, 0, 0, 0};
 
     // Settings are edited against a draft and written back a moment after
     // the last change, so holding a key does not rewrite the file each time.

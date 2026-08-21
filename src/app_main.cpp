@@ -19,6 +19,7 @@
 
 #include <WebView2.h>
 
+#include <cmath>
 #include <string>
 
 #include "native/gfx.hpp"
@@ -90,6 +91,8 @@ void layoutVideo(HWND hwnd, bool playing) {
 void render(HWND hwnd) {
     using namespace tsuzuki;
 
+    bool scrolling = false;
+
     if (!g_canvas.begin(gfx::theme::bg)) return;
 
     // While the video is up, the interface is only the strip underneath it -
@@ -100,16 +103,32 @@ void render(HWND hwnd) {
         g_canvas.pushClip({0, barTop, full.w, static_cast<float>(kControlBar)});
     }
 
-    g_ui.scrollY = g_state.scroll[static_cast<int>(g_state.screen)];
+    const int idx = static_cast<int>(g_state.screen);
+
+    // Ease towards the target before drawing, not after. Clamping a frame
+    // that had already been painted is what made fast scrolling flash a
+    // blank page and snap back on every notch.
+    {
+        float maxScroll = g_state.contentH[idx] - full.h;
+        if (maxScroll < 0) maxScroll = 0;
+        if (g_state.scrollTarget[idx] > maxScroll) g_state.scrollTarget[idx] = maxScroll;
+        if (g_state.scrollTarget[idx] < 0) g_state.scrollTarget[idx] = 0;
+
+        const float delta = g_state.scrollTarget[idx] - g_state.scroll[idx];
+        if (std::fabs(delta) < 0.5f) {
+            g_state.scroll[idx] = g_state.scrollTarget[idx];
+        } else {
+            g_state.scroll[idx] += delta * 0.25f;
+            scrolling = true;
+        }
+    }
+
+    g_ui.scrollY = g_state.scroll[idx];
     g_animating = view::frame(g_ui, g_state);
 
-    // Clamp the scroll now that the content height is known, so a shorter
-    // screen cannot leave the view stranded past its end.
-    const int idx = static_cast<int>(g_state.screen);
-    float maxScroll = g_ui.contentHeight - full.h;
-    if (maxScroll < 0) maxScroll = 0;
-    if (g_state.scroll[idx] > maxScroll) g_state.scroll[idx] = maxScroll;
-    if (g_state.scroll[idx] < 0) g_state.scroll[idx] = 0;
+    // Height is only known once the screen has laid itself out, so it is
+    // recorded for the next wheel event rather than used to correct this one.
+    g_state.contentH[idx] = g_ui.contentHeight;
 
     if (g_playing) g_canvas.popClip();
     g_canvas.end();
@@ -121,7 +140,7 @@ void render(HWND hwnd) {
     g_input.typed.clear();
     g_input.key = 0;
 
-    if (g_animating) {
+    if (g_animating || scrolling) {
         SetTimer(hwnd, kAnimTimer, 16, nullptr);
     } else {
         KillTimer(hwnd, kAnimTimer);
@@ -222,8 +241,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_MOUSEWHEEL: {
             const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp)) / WHEEL_DELTA;
             const int idx = static_cast<int>(g_state.screen);
-            g_state.scroll[idx] -= notches * 90.0f;
-            if (g_state.scroll[idx] < 0) g_state.scroll[idx] = 0;
+            RECT client{};
+            GetClientRect(hwnd, &client);
+            const float viewH =
+                static_cast<float>(client.bottom - client.top) / g_canvas.dpiScale();
+
+            // Only the target moves; the view eases towards it. Clamped here
+            // as well as in render so holding the wheel at the bottom cannot
+            // build up an offset that has to unwind afterwards.
+            float maxScroll = g_state.contentH[idx] - viewH;
+            if (maxScroll < 0) maxScroll = 0;
+            g_state.scrollTarget[idx] -= notches * 110.0f;
+            if (g_state.scrollTarget[idx] > maxScroll) g_state.scrollTarget[idx] = maxScroll;
+            if (g_state.scrollTarget[idx] < 0) g_state.scrollTarget[idx] = 0;
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
@@ -233,14 +263,29 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
 
-        case WM_KEYDOWN:
+        case WM_KEYDOWN: {
             g_input.key = static_cast<int>(wp);
             g_input.ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+
+            // Only when nothing is being typed into, or Home would jump the
+            // page while someone is editing a download folder.
+            if (g_state.focusField == 0 && !g_state.queryFocused) {
+                const int idx = static_cast<int>(g_state.screen);
+                RECT client{};
+                GetClientRect(hwnd, &client);
+                const float viewH =
+                    static_cast<float>(client.bottom - client.top) / g_canvas.dpiScale();
+                if (wp == VK_NEXT) g_state.scrollTarget[idx] += viewH * 0.9f;
+                if (wp == VK_PRIOR) g_state.scrollTarget[idx] -= viewH * 0.9f;
+                if (wp == VK_HOME) g_state.scrollTarget[idx] = 0;
+                if (wp == VK_END) g_state.scrollTarget[idx] = g_state.contentH[idx];
+            }
             if (wp == VK_ESCAPE) {
                 g_state.screen = tsuzuki::view::Screen::Home;
             }
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
+        }
 
         case WM_PLAYBACK: {
             g_playing = wp != 0;

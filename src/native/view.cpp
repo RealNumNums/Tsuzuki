@@ -287,13 +287,17 @@ bool home(Ui& u, State& st) {
             const int row = static_cast<int>(i) / g.cols;
             Rect box{kPad + col * (g.itemW + kGap), y + row * (cardH + kGap), g.itemW, cardH};
 
+            // Hit-tested where the card rests, then drawn lifted. Testing the
+            // lifted rectangle meant hovering moved the card out from under the
+            // pointer, which un-hovered it, which dropped it back - a card
+            // under the cursor simply vibrated.
             const int id = 100 + static_cast<int>(i);
+            const bool clicked = u.clickable(id, box);
             const float h = u.hover(id);
             if (h > 0) {
                 box = box.offset(0, -2 * h);
                 wantMore = true;
             }
-            const bool clicked = u.clickable(id, box);
 
             u.c.fill(box, h > 0.1f ? cardHover : card, kRadius);
             u.c.stroke(box, h > 0.1f ? accent : line, kRadius);
@@ -354,12 +358,12 @@ bool home(Ui& u, State& st) {
             Rect tile{kPad + col * (g.itemW + kGap), y + row * (tileH + kGap), g.itemW, tileH};
 
             const int id = 300 + static_cast<int>(i);
+            const bool clicked = u.clickable(id, tile);
             const float h = u.hover(id);
             if (h > 0) {
                 tile = tile.offset(0, -3 * h);
                 wantMore = true;
             }
-            const bool clicked = u.clickable(id, tile);
 
             const Rect art{tile.x, tile.y, tile.w, tile.w * 1.42f};
             coverArt(u, e.cover, art, 10);
