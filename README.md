@@ -111,6 +111,22 @@ Settings persist to `%LOCALAPPDATA%\Tsuzuki\settings.json`: download folder,
 speed limit, max connections, preferred quality, preferred audio/subtitle
 language, buffer override, delete-after-watching, subtitles on by default.
 
+## Talking to mpv
+
+Controls, the rolling window, resume points and progress sync all read the
+playhead from mpv's JSON IPC socket, so all four fail together if that socket
+is not there.
+
+On Windows mpv **prepends** `\\.\pipe\` to whatever `--input-ipc-server` is
+given. Passing the full path makes it listen on `\\.\pipe\\\.\pipe\tsuzuki-mpv`,
+which nothing can reach - and mpv reports no error, so playback looks entirely
+normal while every control is dead. The option gets the bare name; only the
+client side spells out the path.
+
+Because that failure is invisible from the outside, the player now says so on
+screen when mpv is running but not answering, rather than quietly skipping the
+things that depend on it.
+
 ## Adaptive streaming
 
 Buffer size is measured, not guessed. Tsuzuki primes the container (head plus
@@ -132,12 +148,16 @@ anime - so opening episode 8 forgets where you were in episode 5. This keys on
 the episode too, and falls back to the torrent infohash when there is no
 AniList id, so plain magnets resume as well.
 
-Finishing an episode (past 90%) clears its resume point and syncs progress.
+Finishing an episode clears its resume point and syncs progress. "Finished" is
+hayase-app/interface's rule from `player.svelte` - within `max(180, duration/10)`
+of the end - rather than a flat percentage, so skipping the ending still
+finishes the episode and a film scales with its runtime instead of demanding
+another twenty minutes.
 
 ## Accounts
 
 Press **Link AniList**. A sign-in window opens, you approve Tsuzuki, and it
-links itself. Episodes are marked watched once you pass 80% of them.
+links itself. Episodes are marked watched on the completion rule above.
 
 The mechanism is the one hayase-app/interface uses:
 

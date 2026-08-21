@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -686,6 +687,10 @@ void playFile(Engine& e, int index) {
     const int windowPieces = std::max(2, bufferPieces);
     int lastWindowStart = firstPiece;
     double lastPosition = 0, lastDuration = 0, lastSaved = 0;
+    // A silent IPC failure used to look exactly like a normal watch: the video
+    // played, and nothing else worked. Notice it and say so instead.
+    const auto playbackStart = std::chrono::steady_clock::now();
+    bool everConnected = false, warnedAboutIpc = false;
 
     while (WaitForSingleObject(pi.hProcess, 500) == WAIT_TIMEOUT) {
         if (e.stopRequested) {
@@ -694,24 +699,41 @@ void playFile(Engine& e, int index) {
         }
 
         const player::State ps = player::state();
-        if (!ps.running || ps.duration <= 0) continue;
+        if (!ps.running) {
+            const auto waited = std::chrono::duration_cast<std::chrono::seconds>(
+                                    std::chrono::steady_clock::now() - playbackStart).count();
+            if (!everConnected && !warnedAboutIpc && waited >= 15) {
+                warnedAboutIpc = true;
+                e.setMessage("Playing, but mpv is not answering on its control socket - "
+                             "controls, resume and progress sync are off for this episode.");
+            }
+            continue;
+        }
+        everConnected = true;
+
+        // mpv reports no duration until it has parsed enough of the container,
+        // and for a few files never does. Fall back to the runtime AniList
+        // knows about rather than abandoning the episode's progress outright.
+        const double duration = ps.duration > 0 ? ps.duration : durationSec;
         lastPosition = ps.position;
-        lastDuration = ps.duration;
+        lastDuration = duration;
 
         // Checkpoint every few seconds so closing mpv, or losing power, still
-        // leaves a usable place to come back to.
-        if (ps.position - lastSaved >= 5.0 || lastSaved == 0) {
+        // leaves a usable place to come back to. Compared as an absolute
+        // difference so seeking backwards checkpoints as well, rather than
+        // going unrecorded until playback passes the old mark again.
+        if (lastSaved == 0 || std::fabs(ps.position - lastSaved) >= 5.0) {
             lastSaved = ps.position;
             progress::Position now;
             now.known = true;
             now.episode = watchedEp;
             now.seconds = ps.position;
-            now.duration = ps.duration;
+            now.duration = duration;
             now.title = e.showTitle.empty() ? e.info->name() : e.showTitle;
             progress::set(progressKey, now);
         }
 
-        const double fraction = std::min(1.0, ps.position / ps.duration);
+        const double fraction = std::min(1.0, ps.position / duration);
         const std::int64_t offset = static_cast<std::int64_t>(fraction * chosen->size);
         const int atPiece = static_cast<int>(
             e.info->map_file(fidx, std::min(offset, chosen->size - 1), 0).piece);
@@ -744,8 +766,6 @@ void playFile(Engine& e, int index) {
     discord::clear();
     if (g_playbackHook) g_playbackHook(false);
 
-    // Only count it as watched past 80%. Opening an episode and bailing after
-    // two minutes should not mark it done on someone's list.
     // hayase-app/interface player.svelte: fromend = max(180, duration/10), and
     // anything past that counts as watched. Better than a flat percentage -
     // it means skipping the ending still finishes the episode.

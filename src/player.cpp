@@ -14,7 +14,15 @@ namespace {
 
 using nlohmann::json;
 
-constexpr const char* kPipe = R"(\\.\pipe\tsuzuki-mpv)";
+// mpv prepends \\.\pipe\ to whatever --input-ipc-server is handed to it, so the
+// option takes the bare name and only our side of the connection spells out
+// the full path. Passing the full path made mpv listen on
+// \\.\pipe\\\.\pipe\tsuzuki-mpv instead: no error, and no socket where
+// anyone was looking. Every state() call has failed quietly ever since, and
+// that one wrong string is what disabled the player controls, the rolling
+// window, resume points and AniList progress sync all at once.
+constexpr const char* kPipeName = "tsuzuki-mpv";
+constexpr const char* kPipePath = R"(\\.\pipe\tsuzuki-mpv)";
 
 std::mutex g_mutex;
 std::string g_pending;  // bytes read but not yet consumed
@@ -33,7 +41,7 @@ void disconnect() {
 
 bool ensureConnected() {
     if (g_pipe != INVALID_HANDLE_VALUE) return true;
-    g_pipe = CreateFileA(kPipe, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+    g_pipe = CreateFileA(kPipePath, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
                          0, nullptr);
     if (g_pipe == INVALID_HANDLE_VALUE) return false;
 
@@ -122,7 +130,7 @@ void disconnect() {}
 
 }  // namespace
 
-std::string pipeName() { return kPipe; }
+std::string pipeName() { return kPipeName; }
 
 bool connected() {
     std::lock_guard<std::mutex> lock(g_mutex);
