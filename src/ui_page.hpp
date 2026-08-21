@@ -779,29 +779,26 @@ function applyTheme(name){
   html += '<div id="aErr"></div>';
 
   if(!acct.linked){
-    // Both credentials are editable, always. The built-in pair is only a
-    // default, and if it is wrong there has to be a way to correct it without
-    // rebuilding.
+    // One field, one button. Everything else was setup detail that only
+    // matters when something has already gone wrong, so it hides until asked
+    // for.
     html += '<div class="wiz">'+
-      '<div class="step"><span class="n">1</span><div class="txt">Create an AniList app, '+
-        'or open the one you already made.</div>'+
-        '<button class="small" id="wOpen">Open AniList</button></div>'+
-
-      '<div class="step"><span class="n">2</span><div class="copyrow">'+
-        '<code id="wUrl">http://127.0.0.1:7654/auth/anilist</code>'+
-        '<button class="small" id="wCopy">Copy</button></div></div>'+
-      '<div class="txt" style="padding-left:34px;margin:-4px 0 8px">'+
-        'This must be the Redirect URL on the AniList client, character for character. '+
-        'A mismatch is the usual cause of a failed link.</div>'+
-
-      '<div class="step"><span class="n">3</span><div class="copyrow">'+
-        '<input id="wId" placeholder="Client ID" autocomplete="off" value="'+
-          esc(acct.clientId||'')+'"></div></div>'+
-      '<div class="step"><span class="n">4</span><div class="copyrow">'+
-        '<input id="wSecret" type="password" placeholder="Client Secret" autocomplete="off">'+
-        '<button class="small" id="wSave">Save &amp; link</button></div></div>'+
-      '<div class="txt" style="padding-left:34px">Paste these as text rather than reading them '+
-        'off a screenshot - one wrong character reads as "invalid_client".</div>'+
+      '<div class="step"><div class="copyrow">'+
+        '<input id="wSecret" type="password" placeholder="Paste your AniList Client Secret" autocomplete="off">'+
+        '<button class="small" id="wSave">Link</button></div></div>'+
+      '<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--dim);font-size:12.5px">'+
+        'Not working, or setting this up for the first time?</summary>'+
+        '<div class="txt" style="padding-top:10px">'+
+          'On <a href="#" id="wOpen">anilist.co/settings/developer</a>, the client\'s '+
+          '<b>Redirect URL</b> must be exactly:</div>'+
+        '<div class="copyrow" style="margin:8px 0">'+
+          '<code id="wUrl">http://127.0.0.1:7654/auth/anilist</code>'+
+          '<button class="small" id="wCopy">Copy</button></div>'+
+        '<div class="copyrow" style="margin:8px 0">'+
+          '<input id="wId" placeholder="Client ID" autocomplete="off" value="'+esc(acct.clientId||'')+'"></div>'+
+        '<div class="txt">Paste both as text. Reading them off a screenshot gets a character '+
+          'wrong and AniList answers "invalid_client".</div>'+
+      '</details>'+
     '</div>';
   }
   html += '</div>';
@@ -859,8 +856,10 @@ function applyTheme(name){
     if(box) box.innerHTML = m ? '<div class="alert">'+esc(m)+'</div>' : '';
   };
 
-  if($('#wOpen')) $('#wOpen').onclick = () =>
+  if($('#wOpen')) $('#wOpen').onclick = (e) => {
+    e.preventDefault();
     window.open('https://anilist.co/settings/developer', '_blank');
+  };
 
   if($('#wCopy')) $('#wCopy').onclick = async () => {
     try{
@@ -871,12 +870,13 @@ function applyTheme(name){
   };
 
   if($('#wSave')) $('#wSave').onclick = async () => {
-    const id = ($('#wId').value || '').trim();
+    const idEl = $('#wId');
+    const id = idEl ? (idEl.value || '').trim() : '';
     const secret = ($('#wSecret').value || '').trim();
-    if(!id){ showErr('Client ID is required.'); return; }
+    if(!secret){ showErr('Paste the Client Secret from AniList first.'); $('#wSecret').focus(); return; }
     showErr('');
-    const body = {anilistClientId: id};
-    if(secret) body.anilistClientSecret = secret;
+    const body = {anilistClientSecret: secret};
+    if(id) body.anilistClientId = id;
     await fetch('/api/settings', {method:'POST',headers:{'Content-Type':'application/json'},
       body: JSON.stringify(body)});
     startLink();
@@ -900,9 +900,9 @@ function applyTheme(name){
   }
 
   if($('#aIn')) $('#aIn').onclick = async () => {
-    if(!acct.hasClientId){
-      showErr('Enter the client id below first.');
-      if($('#wId')) $('#wId').focus();
+    if($('#wSecret') && !$('#wSecret').value.trim()){
+      showErr('Paste your AniList Client Secret below, then press Link.');
+      $('#wSecret').focus();
       return;
     }
     startLink();
