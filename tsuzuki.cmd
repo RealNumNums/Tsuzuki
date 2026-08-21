@@ -1,40 +1,61 @@
 @echo off
-REM Launcher for Tsuzuki.
+REM Tsuzuki launcher.
 REM
-REM The exe needs the DLLs that sit beside it in build\Release, so this calls
-REM it in place rather than copying it out.
+REM Runs the exe in place from build\Release - it needs the DLLs that sit
+REM beside it there, so it cannot simply be copied out on its own.
 REM
-REM Default save path is %TEMP%\tsuzuki - downloads are disposable and get
-REM removed after playback unless you pass --keep. Passing your own
-REM --save-path after the other arguments overrides this default.
+REM Double-click it for an interactive prompt, or pass arguments to script it.
+REM Downloads default to %TEMP%\tsuzuki and are deleted after playback unless
+REM you pass --keep.
 
 setlocal
-set "TSUZUKI_EXE=%~dp0build\Release\tsuzuki.exe"
+set "TSUZUKI_EXE=%~dp0buildRelease	suzuki.exe"
 
 if not exist "%TSUZUKI_EXE%" (
-  echo tsuzuki.exe not found at "%TSUZUKI_EXE%"
-  echo Build it first:  cmake --build build --config Release
+  echo.
+  echo   tsuzuki.exe was not found at "%TSUZUKI_EXE%".
+  echo   Build it first:  cmake --build build --config Release
+  echo.
+  pause
   exit /b 1
 )
 
-if "%~1"=="" (
-  echo.
-  echo   Tsuzuki - anime torrent streaming
-  echo.
-  echo   tsuzuki search "frieren"                     browse releases, pick one
-  echo   tsuzuki search "frieren" --episode 5         jump straight to episode 5
-  echo   tsuzuki search "frieren" --res 1080          prefer 1080p
-  echo   tsuzuki "magnet:?xt=urn:btih:..."            play a magnet directly
-  echo.
-  echo   --keep            don't delete after watching
-  echo   --save-path DIR   download somewhere other than %%TEMP%%\tsuzuki
-  echo.
-  echo   Needs mpv installed. Exit code 2 means the episode you asked for
-  echo   isn't clearly in that torrent - it refuses rather than playing the
-  echo   wrong one. Re-run without --episode and pick a row.
-  echo.
-  exit /b 0
+REM Arguments given: pass straight through, no prompts, no pause.
+if not "%~1"=="" (
+  "%TSUZUKI_EXE%" --save-path "%TEMP%\tsuzuki" %*
+  exit /b %ERRORLEVEL%
 )
 
-"%TSUZUKI_EXE%" --save-path "%TEMP%\tsuzuki" %*
-exit /b %ERRORLEVEL%
+REM No arguments - assume a double-click and drive it interactively.
+title Tsuzuki
+echo.
+echo   Tsuzuki - anime torrent streaming
+echo   ---------------------------------
+echo.
+echo   Downloads go to %TEMP%\tsuzuki and are deleted after you finish
+echo   watching. Needs mpv installed.
+echo.
+
+set "TITLE_INPUT="
+set /p "TITLE_INPUT=  Anime title (blank to quit): "
+if "%TITLE_INPUT%"=="" exit /b 0
+
+set "EP_INPUT="
+set /p "EP_INPUT=  Episode number (blank = choose from a list): "
+
+set "EP_ARG="
+if not "%EP_INPUT%"=="" set "EP_ARG=--episode %EP_INPUT%"
+
+echo.
+"%TSUZUKI_EXE%" --save-path "%TEMP%\tsuzuki" search "%TITLE_INPUT%" %EP_ARG%
+set "RC=%ERRORLEVEL%"
+
+echo.
+if "%RC%"=="2" (
+  echo   Refused: that episode is not clearly in the torrent, so nothing
+  echo   was played. Run again and leave the episode blank to pick a file
+  echo   yourself.
+)
+echo.
+pause
+exit /b %RC%
