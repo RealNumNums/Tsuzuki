@@ -957,6 +957,23 @@ static void installRoutes(httplib::Server& server, Engine& e) {
         std::string error;
         bool ok = false;
 
+        // Visiting this page directly - no code, no error - is not a failure.
+        // It only means someone typed the URL in, so say so plainly instead of
+        // announcing that linking broke.
+        if (!req.has_param("code") && !req.has_param("error")) {
+            res.set_content(
+                "<!doctype html><meta charset=utf-8><title>Tsuzuki</title>"
+                "<style>body{background:#0e0d17;color:#9a94bd;font:15px system-ui;"
+                "display:flex;align-items:center;justify-content:center;height:100vh;"
+                "margin:0;text-align:center}b{color:#ece9f7}</style>"
+                "<div><p><b>This is Tsuzuki&rsquo;s login callback.</b><br>"
+                "Nothing to do here - it is only somewhere AniList sends you back to.</p>"
+                "<p style=\"font-size:13px\">Start linking from Settings &rarr; Account "
+                "inside Tsuzuki.</p></div>",
+                "text/html; charset=utf-8");
+            return;
+        }
+
         if (req.has_param("error")) {
             error = req.get_param_value("error_description").empty()
                         ? req.get_param_value("error")
