@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "settings.hpp"
+
 namespace tsuzuki::ui {
 
 // Starts the same server on a background thread and returns once it is
@@ -40,6 +42,17 @@ struct HistoryItem {
     long long at = 0;
 };
 std::vector<HistoryItem> history();
+
+// Settings, for the screen that edits them. applySettings writes to disk and
+// pushes the parts the running session cares about (speed limit, connection
+// cap, DoH resolver) straight into libtorrent.
+Settings settings();
+void applySettings(const Settings&);
+
+// Starts AniList linking. In the app this opens the window we own; returns
+// false with `error` set when there is no client id to use.
+bool startAniListLogin(std::string& error);
+void logoutAniList();
 
 void shutdown();
 

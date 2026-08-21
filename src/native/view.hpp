@@ -10,6 +10,7 @@
 // Drawing is all our own (see gfx), so this looks like a media app rather than
 // a tool: rounded cards, cover art, gradient scrims, hover lift.
 
+#include "../settings.hpp"
 #include "gfx.hpp"
 
 #include <string>
@@ -88,11 +89,23 @@ struct State {
     int resumeIndex = -1;
 
     float scroll[6] = {0, 0, 0, 0, 0, 0};  // one per screen
+
+    // Settings are edited against a draft and written back a moment after
+    // the last change, so holding a key does not rewrite the file each time.
+    Settings draft;
+    bool draftLoaded = false;
+    bool draftDirty = false;
+    unsigned draftAt = 0;
+    // Which text field has the caret. Zero means none.
+    int focusField = 0;
 };
 
 // Draws the current screen. Returns true if another frame is wanted soon
 // (an animation is running, or something is loading).
 bool frame(Ui&, State&);
+
+// Defined in settings_screen.cpp.
+bool settingsScreen(Ui&, State&);
 
 // Shared bits the screens use.
 std::wstring widen(const std::string&);

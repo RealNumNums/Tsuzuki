@@ -1,6 +1,7 @@
 #include "ui.hpp"
 
 #include "library.hpp"
+#include "settings.hpp"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -44,6 +45,8 @@
 
 namespace tsuzuki::ui {
 namespace {
+
+using tsuzuki::Settings;
 
 using nlohmann::json;
 
@@ -109,51 +112,6 @@ struct Engine {
 
 // Persisted preferences. Kept as plain JSON next to the WebView2 profile so
 // it can be inspected or deleted by hand.
-struct Settings {
-    std::string savePath;
-    double speedLimit = 0;      // Mb/s, 0 = unlimited
-    int maxConnections = 200;
-    std::string quality = "1080";
-    std::string audioLang;
-    std::string subLang;
-    double bufferSeconds = 0;   // 0 = size it from measured throughput
-    bool deleteAfter = true;
-    bool subsOn = true;
-
-    // Interface
-    std::string theme = "tsuzuki";
-    std::string titleLanguage = "romaji";   // romaji | english | native
-
-    // Lookup
-    std::string lookupPreference = "quality";  // quality | size | availability
-    bool autoSelect = false;
-
-    // Torrent client
-    bool streamedDownload = false;  // only fetch what playback needs
-    int torrentPort = 0;            // 0 = pick one
-    int dhtPort = 0;
-    bool disableDHT = false;
-    bool disablePeX = false;
-
-    // Accounts
-    std::string anilistClientId;
-    std::string anilistClientSecret;
-    // Must match what the AniList client is registered with. Defaults to our
-    // own loopback, but can be anything - including a page we do not control,
-    // in which case the code is handed back manually.
-    std::string anilistRedirect = "http://127.0.0.1:7654/auth/anilist";
-    bool syncProgress = true;
-
-    // Interface extras
-    double uiScale = 1.0;
-    bool hideSpoilers = false;
-    bool showAdult = false;
-
-    // Privacy / presence
-    std::string dohUrl;
-    std::string discordClientId;
-    bool discordPresence = true;
-};
 
 Settings g_settings;
 std::mutex g_settingsMutex;
@@ -875,6 +833,52 @@ void playFile(Engine& e, int index) {
 
 
 }  // namespace
+
+Settings settings() { return currentSettings(); }
+
+void applySettings(const Settings& next) {
+    {
+        std::lock_guard<std::mutex> lock(g_settingsMutex);
+        g_settings = next;
+    }
+    saveSettings();
+
+    Engine& e = engine();
+    const Settings cfg = currentSettings();
+    applySessionSettings(e, cfg);
+    // A new download folder applies to the next torrent, not the open one.
+    if (!cfg.savePath.empty() && !e.handle.is_valid()) e.savePath = cfg.savePath;
+}
+
+// Defined below, with the rest of the host hooks.
+extern AuthHook g_authHook;
+
+bool startAniListLogin(std::string& error) {
+    const Settings cfg = currentSettings();
+    const std::string clientId = track::resolveClientId(cfg.anilistClientId);
+
+    // In the app, use the window we control and the implicit grant - no
+    // redirect handling and nothing to copy.
+    if (g_authHook) {
+        const std::string inApp = track::implicitAuthorizeUrl(clientId);
+        if (!inApp.empty()) {
+            g_authHook(inApp.c_str());
+            return true;
+        }
+    }
+
+    const std::string url = track::authorizeUrl(clientId, cfg.anilistRedirect);
+    if (url.empty()) {
+        error =
+            "No AniList client id is available. Add one in Settings, or "
+            "rebuild with one baked in.";
+        return false;
+    }
+    openExternal(url);
+    return true;
+}
+
+void logoutAniList() { track::logout(); }
 
 std::vector<HistoryItem> history() {
     std::vector<HistoryItem> out;

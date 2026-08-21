@@ -55,6 +55,11 @@ constexpr UINT_PTR kAnimTimer = 1;
 tsuzuki::gfx::Canvas g_canvas;
 tsuzuki::view::State g_state;
 tsuzuki::view::Input g_input;
+// One Ui for the life of the window, not one per frame. It carries which
+// element is being pressed and how far each hover has eased in - rebuilding it
+// each frame reset both, so a press and its release landed on different
+// objects and no click was ever recognised.
+tsuzuki::view::Ui g_ui(g_canvas, g_input);
 bool g_playing = false;
 bool g_animating = false;
 
@@ -95,14 +100,13 @@ void render(HWND hwnd) {
         g_canvas.pushClip({0, barTop, full.w, static_cast<float>(kControlBar)});
     }
 
-    view::Ui ui(g_canvas, g_input);
-    ui.scrollY = g_state.scroll[static_cast<int>(g_state.screen)];
-    g_animating = view::frame(ui, g_state);
+    g_ui.scrollY = g_state.scroll[static_cast<int>(g_state.screen)];
+    g_animating = view::frame(g_ui, g_state);
 
     // Clamp the scroll now that the content height is known, so a shorter
     // screen cannot leave the view stranded past its end.
     const int idx = static_cast<int>(g_state.screen);
-    float maxScroll = ui.contentHeight - full.h;
+    float maxScroll = g_ui.contentHeight - full.h;
     if (maxScroll < 0) maxScroll = 0;
     if (g_state.scroll[idx] > maxScroll) g_state.scroll[idx] = maxScroll;
     if (g_state.scroll[idx] < 0) g_state.scroll[idx] = 0;

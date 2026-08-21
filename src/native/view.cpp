@@ -155,7 +155,7 @@ bool header(Ui& u, State& st) {
     u.c.text(L"続き", {kPad + 78, 24, 60, 20}, accent.withAlpha(0.85f), f(13));
 
     // Search field
-    const Rect box{kPad + 150, 14, w - kPad * 2 - 150 - 240, 34};
+    const Rect box{kPad + 150, 14, w - kPad * 2 - 150 - 400, 34};
     const bool overBox = box.contains(u.in.mouseX, u.in.mouseY);
     if (u.in.mousePressed) st.queryFocused = overBox;
     u.c.fill(box, gfx::rgb(0x16161F), 9);
@@ -187,6 +187,29 @@ bool header(Ui& u, State& st) {
     u.c.text(L"Search", {go.x, go.y + 8, go.w, 20}, gfx::rgb(0x2A0D18),
              f(13.5f, gfx::Weight::Semibold, gfx::Align::Center));
     if (hot) submit = true;
+
+    // Navigation. Two destinations for now, and the current one is marked
+    // so the window never leaves you guessing where you are.
+    struct NavItem { const wchar_t* label; Screen screen; float width; };
+    const NavItem nav[] = {{L"Home", Screen::Home, 62}, {L"Settings", Screen::Settings, 84}};
+    float navX = go.right() + 16;
+    for (int i = 0; i < 2; ++i) {
+        const Rect item{navX, 14, nav[i].width, 34};
+        const bool on = st.screen == nav[i].screen;
+        const bool over = u.clickable(9010 + i, item);
+        if (on || u.hover(9010 + i) > 0.05f) {
+            u.c.fill(item, on ? gfx::rgb(0x22222E) : gfx::rgb(0x1A1A24), 8);
+        }
+        u.c.text(nav[i].label, {item.x, item.y + 8, item.w, 20}, on ? fg : dim,
+                 f(13, on ? gfx::Weight::Semibold : gfx::Weight::Regular, gfx::Align::Center));
+        if (over) {
+            st.screen = nav[i].screen;
+            st.queryFocused = false;
+            st.focusField = 0;
+            if (nav[i].screen == Screen::Settings) st.draftLoaded = false;
+        }
+        navX += nav[i].width + 6;
+    }
 
     if (st.queryFocused) {
         if (!u.in.typed.empty()) {
@@ -438,6 +461,7 @@ bool frame(Ui& u, State& st) {
 
     switch (st.screen) {
         case Screen::Home: wantMore = home(u, st); break;
+        case Screen::Settings: wantMore = settingsScreen(u, st); break;
         default:
             u.c.text(L"Coming next: results, episodes, settings.",
                      {kPad, kHeaderH + 60, u.c.bounds().w - kPad * 2, 24}, dim, f(14));
