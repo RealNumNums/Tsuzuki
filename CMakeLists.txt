@@ -33,7 +33,10 @@ add_library(tsuzuki_core STATIC
   src/player.cpp
   src/track.cpp
   src/discord.cpp
-  src/progress.cpp
+  src/library.cpp
+  src/native/gfx.cpp
+  src/native/images.cpp
+  src/native/view.cpp
 )
 target_include_directories(tsuzuki_core PUBLIC src)
 target_link_libraries(tsuzuki_core PUBLIC
@@ -63,6 +66,11 @@ if(WIN32)
     unofficial::webview2::webview2
     dwmapi
     shell32
+    d2d1
+    dwrite
+    d3d11
+    dxgi
+    windowscodecs
   )
   set_target_properties(tsuzuki-app PROPERTIES OUTPUT_NAME "Tsuzuki")
 endif()

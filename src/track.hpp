@@ -65,6 +65,11 @@ Account account(bool force = false);
 // if not linked, or if AniList rejected it.
 bool updateProgress(int mediaId, int progress);
 
+// As above, but says which status the entry should end up in - COMPLETED once
+// the last episode is watched, CURRENT otherwise. An empty status leaves
+// whatever AniList already has.
+bool updateEntry(int mediaId, int progress, const std::string& status);
+
 // An entry on the signed-in user's list.
 struct ListEntry {
     int mediaId = 0;

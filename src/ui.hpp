@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace tsuzuki::ui {
 
@@ -29,6 +30,16 @@ void setAuthHook(AuthHook hook);
 
 // Called by that window once it has the token.
 void acceptToken(const std::string& token);
+
+// Recently opened torrents, newest first. The native interface reads this
+// directly rather than going back out through the loopback server.
+struct HistoryItem {
+    std::string magnet, file, torrent, show, cover;
+    int anilistId = 0;
+    int episode = 0;
+    long long at = 0;
+};
+std::vector<HistoryItem> history();
 
 void shutdown();
 

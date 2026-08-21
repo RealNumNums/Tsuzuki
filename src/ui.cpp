@@ -1,5 +1,7 @@
 #include "ui.hpp"
 
+#include "library.hpp"
+
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 
@@ -34,7 +36,6 @@
 #include "anilist.hpp"
 #include "http.hpp"
 #include "player.hpp"
-#include "progress.hpp"
 #include "scan.hpp"
 #include "sources/source.hpp"
 #include "discord.hpp"
@@ -76,7 +77,12 @@ struct Engine {
     std::vector<ScannedFile> files;
 
     int runtimeMinutes = 0;   // from AniList, for bitrate estimation
+    int totalEpisodes = 0;    // from AniList, so the last one can complete the entry
     int anilistId = 0;
+    // Where the next play should start: -1 means decide from the stored
+    // position, 0 means the user chose to start over, anything else is an
+    // explicit resume point in seconds.
+    double resumeFrom = -1;
     std::string showTitle;
     std::string showCover;
 
@@ -435,6 +441,7 @@ bool openTorrent(Engine& e, const std::string& magnet, std::string& err) {
     e.showCover.clear();
     e.anilistId = 0;
     e.runtimeMinutes = 0;
+    e.totalEpisodes = 0;
 
     // Work out which show this is from the release name, rather than relying
     // on the page to have carried an id here. Opening from history, or from a
@@ -610,8 +617,26 @@ void playFile(Engine& e, int index) {
         }
     }
     const std::string progressKey =
-        progress::keyFor(e.anilistId, watchedEp, infoHex, chosen->index);
-    const progress::Position resume = progress::get(progressKey);
+        library::keyFor(e.anilistId, watchedEp, infoHex, chosen->index);
+    const library::EpisodeProgress resume = library::get(progressKey);
+
+    // Everything the record needs to be reopened straight from the home
+    // screen, filled in once rather than at every checkpoint.
+    const auto record = [&](double seconds, double duration, bool completed) {
+        library::EpisodeProgress p;
+        p.anilistId = e.anilistId;
+        p.episode = watchedEp;
+        p.currentTime = seconds;
+        p.duration = duration;
+        p.completed = completed;
+        p.title = e.showTitle.empty() ? e.info->name() : e.showTitle;
+        p.cover = e.showCover;
+        p.magnet = e.openMagnet;
+        p.file = chosen->name;
+        p.infoHash = infoHex;
+        p.fileIndex = chosen->index;
+        library::put(p);
+    };
 
     std::string cmd = "\"" + findMpv() + "\"";
     if (g_videoHost) {
@@ -624,11 +649,11 @@ void playFile(Engine& e, int index) {
     if (!cfg.audioLang.empty()) cmd += " --alang=" + cfg.audioLang;
     if (!cfg.subLang.empty()) cmd += " --slang=" + cfg.subLang;
     cmd += cfg.subsOn ? " --sub-visibility=yes" : " --sub-visibility=no";
-    if (progress::worthResuming(resume)) {
-        cmd += " --start=" + std::to_string(static_cast<long long>(resume.seconds));
-        e.setMessage("Resuming at " +
-                     std::to_string(static_cast<int>(resume.seconds) / 60) + "m" +
-                     std::to_string(static_cast<int>(resume.seconds) % 60) + "s");
+    if (e.resumeFrom >= 0 ? e.resumeFrom > 0 : library::worthResuming(resume)) {
+        const double at = e.resumeFrom >= 0 ? e.resumeFrom : resume.currentTime;
+        cmd += " --start=" + std::to_string(static_cast<long long>(at));
+        e.setMessage("Resuming at " + std::to_string(static_cast<int>(at) / 60) + "m" +
+                     std::to_string(static_cast<int>(at) % 60) + "s");
     }
     cmd += " --force-window=yes --cache=yes --demuxer-max-bytes=200MiB";
     cmd += " \"" + path + "\"";
@@ -687,6 +712,8 @@ void playFile(Engine& e, int index) {
     const int windowPieces = std::max(2, bufferPieces);
     int lastWindowStart = firstPiece;
     double lastPosition = 0, lastDuration = 0, lastSaved = 0;
+    double lastSample = 0;
+    bool wasPaused = false, sampled = false;
     // A silent IPC failure used to look exactly like a normal watch: the video
     // played, and nothing else worked. Notice it and say so instead.
     const auto playbackStart = std::chrono::steady_clock::now();
@@ -718,19 +745,21 @@ void playFile(Engine& e, int index) {
         lastPosition = ps.position;
         lastDuration = duration;
 
-        // Checkpoint every few seconds so closing mpv, or losing power, still
-        // leaves a usable place to come back to. Compared as an absolute
-        // difference so seeking backwards checkpoints as well, rather than
-        // going unrecorded until playback passes the old mark again.
-        if (lastSaved == 0 || std::fabs(ps.position - lastSaved) >= 5.0) {
+        // Checkpoint on a five second tick, and immediately on the two things
+        // that mean the position just changed for a reason: pausing, and
+        // seeking. A seek is a jump the wall clock cannot account for - the
+        // loop runs twice a second, so anything past three seconds of movement
+        // in one iteration was the user, not playback.
+        const bool paused = ps.paused && !wasPaused;
+        const bool seeked = sampled && std::fabs(ps.position - lastSample) > 3.0;
+        const bool ticked = lastSaved == 0 || std::fabs(ps.position - lastSaved) >= 5.0;
+        wasPaused = ps.paused;
+        lastSample = ps.position;
+        sampled = true;
+
+        if (ticked || paused || seeked) {
             lastSaved = ps.position;
-            progress::Position now;
-            now.known = true;
-            now.episode = watchedEp;
-            now.seconds = ps.position;
-            now.duration = duration;
-            now.title = e.showTitle.empty() ? e.info->name() : e.showTitle;
-            progress::set(progressKey, now);
+            record(ps.position, duration, false);
         }
 
         const double fraction = std::min(1.0, ps.position / duration);
@@ -773,26 +802,23 @@ void playFile(Engine& e, int index) {
                                ? std::max(180.0, lastDuration / 10.0)
                                : 0.0;
     const bool finished = lastDuration > 0 && (lastDuration - fromEnd) < lastPosition;
-    if (finished) {
-        progress::clear(progressKey);
-    } else if (lastDuration > 0) {
-        progress::Position now;
-        now.known = true;
-        now.episode = watchedEp;
-        now.seconds = lastPosition;
-        now.duration = lastDuration;
-        now.title = e.showTitle.empty() ? e.info->name() : e.showTitle;
-        progress::set(progressKey, now);
+    if (lastDuration > 0) {
+        // Marked finished rather than deleted: Continue Watching filters
+        // completed episodes out anyway, and keeping the row is what stops a
+        // replayed completion from looking like a brand new watch.
+        record(lastPosition, lastDuration, finished);
     }
 
     const int watchedEpisode = watchedEp;
     if (cfg.syncProgress && e.anilistId > 0 && watchedEpisode > 0 && finished) {
-        e.setMessage("Updating AniList...");
-        if (track::updateProgress(e.anilistId, watchedEpisode)) {
-            e.setMessage("AniList updated to episode " + std::to_string(watchedEpisode));
-        } else {
-            e.setMessage("Could not update AniList - is the account still linked?");
-        }
+        // Handed to the sync queue rather than sent from here. The write lands
+        // on disk first, the interface moves on immediately, and the worker
+        // retries on its own if AniList is unreachable - so finishing an
+        // episode on a dead connection still counts.
+        const int total = e.totalEpisodes;
+        library::recordWatched(e.anilistId, watchedEpisode, total);
+        e.setMessage("Episode " + std::to_string(watchedEpisode) + " watched" +
+                     (total > 0 && watchedEpisode >= total ? " - series complete" : ""));
     }
 
     // Remove only the episode just watched, and keep the torrent open. Tearing
@@ -850,9 +876,30 @@ void playFile(Engine& e, int index) {
 
 }  // namespace
 
+std::vector<HistoryItem> history() {
+    std::vector<HistoryItem> out;
+    for (const auto& e : loadHistory()) {
+        if (!e.is_object()) continue;
+        HistoryItem h;
+        h.magnet = e.value("magnet", "");
+        h.file = e.value("file", "");
+        h.torrent = e.value("torrent", "");
+        h.show = e.value("show", "");
+        h.cover = e.value("cover", "");
+        h.anilistId = e.value("anilistId", 0);
+        h.episode = e.value("episode", 0);
+        h.at = e.value("at", 0LL);
+        out.push_back(std::move(h));
+    }
+    return out;
+}
+
 void shutdown() {
     discord::clear();
     discord::disconnect();
+    // Before anything that can block: the queue and the watch database must
+    // survive the close even if tearing the torrent down goes wrong.
+    library::stop();
 
     Engine& e = engine();
     std::lock_guard<std::mutex> lock(e.mutex);
@@ -1011,6 +1058,7 @@ static void installRoutes(httplib::Server& server, Engine& e) {
                 }
                 reply["episodeInfo"] = eps;
                 e.runtimeMinutes = d.duration;
+                e.totalEpisodes = d.episodes;
                 e.anilistId = d.id;
                 e.showTitle = d.title;
                 e.showCover = d.coverImage;
@@ -1064,6 +1112,11 @@ static void installRoutes(httplib::Server& server, Engine& e) {
         }
         if (!e.playing) {
             const int index = in.value("index", -1);
+            // -1 keeps the stored position; the page sends 0 for "start over"
+            // and a number of seconds for "resume".
+            e.resumeFrom = in.contains("resumeFrom") && in["resumeFrom"].is_number()
+                               ? in["resumeFrom"].get<double>()
+                               : -1;
             std::thread(
                 [&e, index] {
                     std::lock_guard<std::mutex> lock(e.mutex);
@@ -1270,19 +1323,25 @@ static void installRoutes(httplib::Server& server, Engine& e) {
                            ? std::atoi(req.get_param_value("anilistId").c_str()) : 0;
         const int ep = req.has_param("episode")
                            ? std::atoi(req.get_param_value("episode").c_str()) : 0;
-        const progress::Position p = progress::get(progress::keyFor(id, ep, "", -1));
+        const library::EpisodeProgress p = library::get(library::keyFor(id, ep, "", -1));
         res.set_content(json{{"known", p.known},
                              {"episode", p.episode},
-                             {"seconds", p.seconds},
+                             {"seconds", p.currentTime},
                              {"duration", p.duration},
-                             {"resumable", progress::worthResuming(p)}}
+                             {"percent", p.percent()},
+                             {"remaining", p.remaining()},
+                             {"completed", p.completed},
+                             {"resumable", library::worthResuming(p)}}
                             .dump(),
                         "application/json");
     });
 
+    // Answered from the local cache, so the home screen paints immediately
+    // even on a cold start or with no connection. The worker refreshes it in
+    // the background and the page picks the new values up on its next poll.
     server.Get("/api/lists", [](const httplib::Request&, httplib::Response& res) {
         json out = json::array();
-        for (const auto& e : track::lists()) {
+        for (const auto& e : library::cachedList()) {
             out.push_back({{"mediaId", e.mediaId},
                            {"progress", e.progress},
                            {"episodes", e.episodes},
@@ -1294,6 +1353,42 @@ static void installRoutes(httplib::Server& server, Engine& e) {
                            {"airing", e.airing}});
         }
         res.set_content(out.dump(), "application/json");
+    });
+
+    // Part-watched episodes, newest first, with everything the card needs to
+    // draw a progress bar and reopen the episode at the right second.
+    server.Get("/api/continue", [](const httplib::Request&, httplib::Response& res) {
+        json out = json::array();
+        for (const auto& p : library::continueWatching(12)) {
+            out.push_back({{"anilistId", p.anilistId},
+                           {"episode", p.episode},
+                           {"currentTime", p.currentTime},
+                           {"duration", p.duration},
+                           {"percent", p.percent()},
+                           {"remaining", p.remaining()},
+                           {"lastWatchedAt", p.lastWatchedAt},
+                           {"title", p.title},
+                           {"cover", p.cover},
+                           {"magnet", p.magnet},
+                           {"file", p.file}});
+        }
+        res.set_content(out.dump(), "application/json");
+    });
+
+    server.Get("/api/sync", [](const httplib::Request&, httplib::Response& res) {
+        const library::SyncStatus st = library::syncStatus();
+        res.set_content(json{{"label", st.label()},
+                             {"pending", st.pending},
+                             {"lastSyncAt", st.lastSyncAt},
+                             {"lastError", st.lastError},
+                             {"linked", st.state != library::SyncState::NotLinked}}
+                            .dump(),
+                        "application/json");
+    });
+
+    server.Post("/api/sync/refresh", [](const httplib::Request&, httplib::Response& res) {
+        library::refreshFromAniList();
+        res.set_content("{\"ok\":true}", "application/json");
     });
 
     server.Get("/api/history", [](const httplib::Request&, httplib::Response& res) {
@@ -1399,7 +1494,7 @@ bool startBackground(int port, const std::string& savePath) {
     e.savePath = savePath;
     loadSettings();
     track::load();
-    progress::load();
+    library::start();
     {
         const Settings cfg = currentSettings();
         if (!cfg.savePath.empty()) e.savePath = cfg.savePath;

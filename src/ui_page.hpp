@@ -226,6 +226,37 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
   }
   .tile .prog{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(0,0,0,.5)}
   .tile .prog i{display:block;height:100%;background:var(--accent)}
+  /* Continue watching: the resume time matters more than the artwork, so the
+     card is wider than a poster tile and carries the numbers underneath. */
+  .cw{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+  .cwc{cursor:pointer;background:var(--card);border:1px solid var(--line);border-radius:12px;
+       overflow:hidden;transition:border-color .1s ease,transform .1s ease;display:flex;flex-direction:column}
+  .cwc:hover{border-color:var(--accent);transform:translateY(-2px)}
+  .cwc .art{position:relative;aspect-ratio:16/9;background:#12121a center/cover no-repeat}
+  .cwc .art .badge{position:absolute;left:8px;bottom:10px;font-size:12px;font-weight:600;
+       background:rgba(0,0,0,.72);padding:3px 7px;border-radius:5px}
+  .cwc .art .left{position:absolute;right:8px;bottom:10px;font-size:11.5px;color:#dcdce6;
+       background:rgba(0,0,0,.72);padding:3px 7px;border-radius:5px}
+  .cwc .bar{position:absolute;left:0;right:0;bottom:0;height:4px;background:rgba(0,0,0,.55)}
+  .cwc .bar i{display:block;height:100%;background:var(--accent)}
+  .cwc .meta{padding:9px 11px 11px}
+  .cwc .meta .t{font-size:13.5px;font-weight:600;line-height:1.3}
+  .cwc .meta .s{color:var(--dim);font-size:12px;margin-top:3px;
+       display:flex;justify-content:space-between;gap:8px}
+  /* Sync badge, next to the hint line. Quiet until it has something to say. */
+  #sync{display:inline-flex;align-items:center;gap:6px;margin-left:10px;font-size:12px;color:var(--dim)}
+  #sync i{width:7px;height:7px;border-radius:50%;background:#4ac97e;display:inline-block}
+  #sync.busy i{background:#e0b341}
+  #sync.bad i{background:#e05f5f}
+  #sync.off i{background:#5a5a68}
+  /* Resume prompt */
+  .resume{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0}
+  .resume h4{margin:0 0 4px;font-size:15px}
+  .resume p{margin:0 0 13px;color:var(--dim);font-size:13px}
+  .resume .row{display:flex;gap:9px;flex-wrap:wrap}
+  .resume button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg)}
+)HTMLPAGE"
+    R"HTMLPAGE(
   .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
   .filters select,.filters input{padding:9px 11px;font-size:13px}
   .filters .yr{width:96px}
@@ -371,7 +402,7 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
     </select>
     <button id="go">Search</button>
   </div>
-  <div class="hint">Downloads are deleted after you finish watching. Playback opens in mpv.</div>
+  <div class="hint">Downloads are deleted after you finish watching. Playback opens in mpv.<span id="sync"><i></i><span id="synctext">Synced</span></span></div>
   <div id="out"></div>
 
   <div id="playerbar">
@@ -481,6 +512,11 @@ function startOpenPoll(){
 }
 function stopOpenPoll(){ if(openPoll){ clearInterval(openPoll); openPoll = null; } }
 
+// Set when a Continue Watching card was clicked: the episode to open and the
+// second to open it at. Cleared as soon as it is used, so a later manual pick
+// of the same episode still gets the usual prompt.
+let pendingResume = null;
+
 async function openTorrent(magnet){
   busy('Contacting peers for torrent metadata...');
   startOpenPoll();
@@ -538,7 +574,7 @@ function renderEpisodes(magnet, j){
         '<div class="file">'+esc(f.name)+'</div>'+
         '<div class="chips">'+chipsFor(f.name)+'</div></div>'+
       '<div class="right"><span class="size">'+size(f.size)+'</span>'+
-        '<button data-i="'+f.index+'">Play</button></div></div>';
+        '<button data-i="'+f.index+'" data-ep="'+(parseInt(num,10)||0)+'">Play</button></div></div>';
   }
   html += '</div>';
 
@@ -559,16 +595,56 @@ function renderEpisodes(magnet, j){
 
   out.innerHTML = html;
   $('#back').onclick = () => { if(lastResults) renderResults(); else goHome(); };
-  document.querySelectorAll('.ep button').forEach(b => b.onclick = () => play(magnet, parseInt(b.dataset.i,10)));
+  document.querySelectorAll('.ep button').forEach(b => b.onclick = () =>
+    play(magnet, parseInt(b.dataset.i,10), parseInt(b.dataset.ep,10) || 0));
+
+  // Arrived here from Continue Watching: go straight in at the saved second.
+  if(pendingResume){
+    const want = pendingResume;
+    pendingResume = null;
+    const btn = Array.from(document.querySelectorAll('.ep button'))
+      .find(b => (parseInt(b.dataset.ep,10)||0) === want.episode);
+    if(btn) play(magnet, parseInt(btn.dataset.i,10), want.episode, want.at);
+  }
 }
 
-async function play(magnet, index){
+async function play(magnet, index, episode, resumeFrom){
+  // No explicit instruction yet: if there is somewhere worth going back to,
+  // ask rather than deciding for them. Starting over by accident is far more
+  // annoying than one extra click.
+  if(resumeFrom === undefined && lastAnilistId && episode){
+    let r = null;
+    try{
+      r = await (await fetch('/api/resume?anilistId='+lastAnilistId+'&episode='+episode)).json();
+    }catch(e){}
+    if(r && r.resumable){
+      return askResume(r, () => play(magnet, index, episode, Math.floor(r.seconds)),
+                          () => play(magnet, index, episode, 0));
+    }
+  }
+
   $('#status').style.display = '';
   $('#stext').textContent = 'Buffering...';
   $('#status').scrollIntoView({behavior:'smooth', block:'nearest'});
+  const body = {magnet, index};
+  if(resumeFrom !== undefined) body.resumeFrom = resumeFrom;
   await fetch('/api/play', {method:'POST',headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({magnet, index})});
+    body: JSON.stringify(body)});
   poll();
+}
+
+function askResume(r, onResume, onRestart){
+  const box = document.createElement('div');
+  box.className = 'resume';
+  box.innerHTML = '<h4>Resume from '+fmt(r.seconds)+'?</h4>'+
+    '<p>You stopped '+Math.round(r.percent||0)+'% of the way through episode '+r.episode+
+    ', with '+fmt(r.remaining||0)+' left.</p>'+
+    '<div class="row"><button id="rgo">Resume from '+fmt(r.seconds)+'</button>'+
+    '<button class="ghost" id="rstart">Start from the beginning</button></div>';
+  out.prepend(box);
+  box.scrollIntoView({behavior:'smooth', block:'nearest'});
+  box.querySelector('#rgo').onclick    = () => { box.remove(); onResume(); };
+  box.querySelector('#rstart').onclick = () => { box.remove(); onRestart(); };
 }
 
 async function poll(){
@@ -736,16 +812,20 @@ function goHome(){
 }
 
 async function showHome(){
-  let lists = [], hist = [];
+  let lists = [], hist = [], cont = [];
+  // All three come from the local database, so this paints without waiting on
+  // AniList; the sync worker refreshes underneath and the next visit shows it.
   try{ lists = await (await fetch('/api/lists')).json(); }catch(e){}
-  try{ hist = await (await fetch('/api/history')).json(); }catch(e){}
+  try{ hist  = await (await fetch('/api/history')).json(); }catch(e){}
+  try{ cont  = await (await fetch('/api/continue')).json(); }catch(e){}
   if(!Array.isArray(lists)) lists = [];
+  if(!Array.isArray(cont)) cont = [];
 
   const watching = lists.filter(e => e.status === 'CURRENT' || e.status === 'REPEATING');
   const planning = lists.filter(e => e.status === 'PLANNING');
   const paused   = lists.filter(e => e.status === 'PAUSED');
 
-  if(!lists.length && (!Array.isArray(hist) || !hist.length)){
+  if(!lists.length && !cont.length && (!Array.isArray(hist) || !hist.length)){
     mascot('Search for something to watch.');
     return;
   }
@@ -770,7 +850,29 @@ async function showHome(){
     return h + '</div>';
   };
 
-  html += section('Continue watching', 'from your AniList', watching);
+  // Part-watched episodes come first: picking up where you actually stopped
+  // is the reason most people open the app at all.
+  if(cont.length){
+    html += '<div class="sect"><h3>Continue watching</h3><span>pick up where you left off</span></div><div class="cw">';
+    for(const c of cont){
+      const art = c.cover ? 'background-image:url('+esc(c.cover)+')' : '';
+      const pct = Math.round(c.percent||0);
+      html += '<div class="cwc" data-magnet="'+esc(c.magnet||'')+'" data-al="'+(c.anilistId||0)+
+                '" data-ep="'+(c.episode||0)+'" data-at="'+Math.floor(c.currentTime||0)+'">'+
+        '<div class="art" style="'+art+'">'+
+          '<div class="badge">Episode '+(c.episode||'?')+'</div>'+
+          '<div class="left">'+fmt(c.remaining||0)+' left</div>'+
+          '<div class="bar"><i style="width:'+pct+'%"></i></div>'+
+        '</div>'+
+        '<div class="meta"><div class="t">'+esc(c.title||'Unknown')+'</div>'+
+          '<div class="s"><span>'+fmt(c.currentTime||0)+' / '+fmt(c.duration||0)+'</span>'+
+            '<span>'+pct+'% watched</span></div>'+
+        '</div></div>';
+    }
+    html += '</div>';
+  }
+
+  html += section('From your AniList', 'currently watching', watching);
   html += section('On hold', 'paused', paused);
   html += section('Planning to watch', 'not started', planning);
 
@@ -801,6 +903,19 @@ async function showHome(){
     c.onclick = () => {
       lastAnilistId = parseInt(c.dataset.al, 10) || null;
       openTorrent(c.dataset.magnet);
+    };
+  });
+
+  // A Continue Watching card opens its episode and resumes, with no stop at
+  // the file list and no prompt - the click already said what to do.
+  document.querySelectorAll('.cwc').forEach(c => {
+    c.onclick = () => {
+      const magnet = c.dataset.magnet;
+      if(!magnet) return mascot('That episode has no torrent saved - search for it again.');
+      lastAnilistId = parseInt(c.dataset.al, 10) || null;
+      pendingResume = { episode: parseInt(c.dataset.ep,10)||0, at: parseInt(c.dataset.at,10)||0 };
+      $('#ep').value = pendingResume.episode || '';
+      openTorrent(magnet);
     };
   });
 }
@@ -1129,6 +1244,35 @@ const MASCOT = `)HTMLPAGE"
 <ellipse cx="62" cy="119" rx="9" ry="5.5" fill="#FF9DBB" opacity=".55"/><ellipse cx="138" cy="119" rx="9" ry="5.5" fill="#FF9DBB" opacity=".55"/>
 <path d="M93 124 Q100 131 107 124" stroke="#C2687A" stroke-width="2.6" fill="none" stroke-linecap="round"/>
 <path d="M132 60 L132 76 L146 68 Z" fill="url(#mt)"/></svg>`;
+
+/* --------------------------------------------------------- sync status */
+
+// The badge is the only place the queue is visible, so it has to be honest:
+// green only when there is genuinely nothing outstanding.
+let lastSyncLabel = '';
+async function pollSync(){
+  let j;
+  try{ j = await (await fetch('/api/sync')).json(); }catch(e){
+    const b = $('#sync'); if(b){ b.className = 'off'; $('#synctext').textContent = 'Offline'; }
+    return;
+  }
+  const b = $('#sync');
+  if(!b) return;
+  b.className = !j.linked ? 'off'
+              : j.label === 'Synced' ? ''
+              : /failed|Offline/i.test(j.label) ? 'bad' : 'busy';
+  $('#synctext').textContent = j.label || '';
+  b.title = j.lastError ? j.lastError
+          : (j.lastSyncAt ? 'Last synced ' + new Date(j.lastSyncAt).toLocaleTimeString() : '');
+
+  // The moment a queued write lands, the home screen may be out of date.
+  if(lastSyncLabel && lastSyncLabel !== 'Synced' && j.label === 'Synced' && !inPlayer){
+    if(document.querySelector('.cw') || document.querySelector('.grid')) showHome();
+  }
+  lastSyncLabel = j.label;
+}
+pollSync();
+setInterval(pollSync, 4000);
 
 // ?magnet=... opens a torrent straight away, so a specific release can be
 // linked to. ?q=... runs a search on load.

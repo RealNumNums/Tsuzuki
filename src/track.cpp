@@ -268,22 +268,41 @@ Account account(bool force) {
     return g_account.linked ? g_account : Account{};
 }
 
-bool updateProgress(int mediaId, int progress) {
+bool updateEntry(int mediaId, int progress, const std::string& status) {
     if (mediaId <= 0 || progress <= 0) return false;
     const std::string tok = token();
     if (tok.empty()) return false;
 
-    const json vars{{"id", mediaId}, {"p", progress}};
-    const json j = query(
-        "mutation ($id: Int, $p: Int) {"
-        "  SaveMediaListEntry(mediaId: $id, progress: $p, status: CURRENT) {"
-        "    id progress status"
-        "  }"
-        "}",
-        vars, tok);
+    // status is interpolated rather than passed as a variable because it is a
+    // GraphQL enum, not a string; it is checked against a fixed set first so
+    // nothing from outside can reach the query text.
+    const bool completed = status == "COMPLETED";
+    const char* gql =
+        completed ? "mutation ($id: Int, $p: Int) {"
+                    "  SaveMediaListEntry(mediaId: $id, progress: $p, status: COMPLETED) {"
+                    "    id progress status"
+                    "  }"
+                    "}"
+                  : "mutation ($id: Int, $p: Int) {"
+                    "  SaveMediaListEntry(mediaId: $id, progress: $p, status: CURRENT) {"
+                    "    id progress status"
+                    "  }"
+                    "}";
 
-    return j.contains("data") && !j["data"].is_null() &&
-           !j["data"]["SaveMediaListEntry"].is_null();
+    const json vars{{"id", mediaId}, {"p", progress}};
+    const json j = query(gql, vars, tok);
+
+    // AniList answers errors with a completely different shape, so every step
+    // is checked before the next - indexing a const json at a missing key
+    // throws, and this runs on the sync worker.
+    if (!j.contains("data") || !j["data"].is_object()) return false;
+    const json& data = j["data"];
+    if (!data.contains("SaveMediaListEntry")) return false;
+    return !data["SaveMediaListEntry"].is_null();
+}
+
+bool updateProgress(int mediaId, int progress) {
+    return updateEntry(mediaId, progress, "CURRENT");
 }
 
 std::vector<ListEntry> lists() {
