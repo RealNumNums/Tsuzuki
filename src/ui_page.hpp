@@ -786,6 +786,8 @@ function applyTheme(name){
       '<div class="step"><div class="copyrow">'+
         '<input id="wSecret" type="password" placeholder="Paste your AniList Client Secret" autocomplete="off">'+
         '<button class="small" id="wSave">Link</button></div></div>'+
+      '<div class="txt" style="padding-top:8px">One time only - it is saved after this, and '+
+        'linking is a single click from then on.</div>'+
       '<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--dim);font-size:12.5px">'+
         'Not working, or setting this up for the first time?</summary>'+
         '<div class="txt" style="padding-top:10px">'+
