@@ -87,10 +87,10 @@ Requires vcpkg with `VCPKG_ROOT` set; dependencies come from `vcpkg.json`.
 
 ## Usage
 
-Use `tsuzuki.cmd` in the repo root - the exe needs the DLLs beside it in
-`buildRelease`, so it is portable as a folder, not as a lone file. The
-launcher defaults `--save-path` to `%TEMP%	suzuki`; downloads are removed
-after playback unless you pass `--keep`.
+Double-click `Tsuzuki.exe` for the app, or use `tsuzuki.cmd` in the repo root
+for the console tool. The exes need the DLLs beside them in `build\Release`,
+so this is portable as a folder, not as a lone file. Downloads default to
+`%TEMP%\tsuzuki` and are removed after playback unless you pass `--keep`.
 
 ```
 Tsuzuki.exe                                   # native app window
