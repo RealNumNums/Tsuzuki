@@ -22,6 +22,7 @@ query ($search: String) {
       episodes
       format
       seasonYear
+      isAdult
       title { romaji english native }
       synonyms
     }
@@ -64,6 +65,7 @@ std::vector<Media> search(const std::string& text) {
                              ? m["episodes"].get<int>()
                              : 0;
         media.format = m.value("format", "");
+        media.isAdult = m.value("isAdult", false);
         media.year = m.contains("seasonYear") && !m["seasonYear"].is_null()
                          ? m["seasonYear"].get<int>()
                          : 0;

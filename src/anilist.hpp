@@ -15,6 +15,7 @@ struct Media {
     std::string native;
     std::string preferred;
     std::vector<std::string> synonyms;
+    bool isAdult = false;
 };
 
 // Title search against AniList's public GraphQL API. Returns up to 5 matches,

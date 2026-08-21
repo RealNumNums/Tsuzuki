@@ -21,6 +21,10 @@ Response get(const std::string& url, int timeoutSeconds = 20);
 Response postJson(const std::string& url, const std::string& body, int timeoutSeconds = 20,
                   const std::string& bearerToken = "");
 
+// Route DNS through a DoH resolver for every request this process makes.
+// Empty restores the system resolver.
+void setDohUrl(const std::string& url);
+
 // Percent-encode a query parameter value.
 std::string urlEncode(const std::string& s);
 

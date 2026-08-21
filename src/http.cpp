@@ -10,6 +10,13 @@ namespace tsuzuki::http {
 namespace {
 
 std::once_flag g_initOnce;
+std::string g_dohUrl;
+std::mutex g_dohMutex;
+
+void applyDoh(CURL* curl) {
+    std::lock_guard<std::mutex> lock(g_dohMutex);
+    if (!g_dohUrl.empty()) curl_easy_setopt(curl, CURLOPT_DOH_URL, g_dohUrl.c_str());
+}
 
 void globalInit() {
     std::call_once(g_initOnce, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
@@ -45,6 +52,7 @@ Response get(const std::string& url, int timeoutSeconds) {
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "tsuzuki/0.1 (+https://github.com/RealNumNums/Tsuzuki)");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &r.body);
+    applyDoh(curl);
 
     const CURLcode code = curl_easy_perform(curl);
     if (code == CURLE_OK) {
@@ -90,6 +98,7 @@ Response postJson(const std::string& url, const std::string& body, int timeoutSe
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "tsuzuki/0.1 (+https://github.com/RealNumNums/Tsuzuki)");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &r.body);
+    applyDoh(curl);
 
     const CURLcode code = curl_easy_perform(curl);
     if (code == CURLE_OK) {
@@ -103,6 +112,11 @@ Response postJson(const std::string& url, const std::string& body, int timeoutSe
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
     return r;
+}
+
+void setDohUrl(const std::string& url) {
+    std::lock_guard<std::mutex> lock(g_dohMutex);
+    g_dohUrl = url;
 }
 
 std::string urlEncode(const std::string& s) {

@@ -31,9 +31,11 @@
 #endif
 
 #include "anilist.hpp"
+#include "http.hpp"
 #include "player.hpp"
 #include "scan.hpp"
 #include "sources/source.hpp"
+#include "discord.hpp"
 #include "track.hpp"
 #include "ui_page.hpp"
 
@@ -128,6 +130,16 @@ struct Settings {
     // Accounts
     std::string anilistClientId;
     bool syncProgress = true;
+
+    // Interface extras
+    double uiScale = 1.0;
+    bool hideSpoilers = false;
+    bool showAdult = false;
+
+    // Privacy / presence
+    std::string dohUrl;
+    std::string discordClientId;
+    bool discordPresence = true;
 };
 
 Settings g_settings;
@@ -161,7 +173,13 @@ json settingsToJson(const Settings& s) {
                 {"disableDHT", s.disableDHT},
                 {"disablePeX", s.disablePeX},
                 {"anilistClientId", s.anilistClientId},
-                {"syncProgress", s.syncProgress}};
+                {"syncProgress", s.syncProgress},
+                {"uiScale", s.uiScale},
+                {"hideSpoilers", s.hideSpoilers},
+                {"showAdult", s.showAdult},
+                {"dohUrl", s.dohUrl},
+                {"discordClientId", s.discordClientId},
+                {"discordPresence", s.discordPresence}};
 }
 
 void settingsFromJson(const json& j, Settings& s) {
@@ -185,6 +203,12 @@ void settingsFromJson(const json& j, Settings& s) {
     if (j.contains("disablePeX") && j["disablePeX"].is_boolean()) s.disablePeX = j["disablePeX"];
     if (j.contains("anilistClientId") && j["anilistClientId"].is_string()) s.anilistClientId = j["anilistClientId"];
     if (j.contains("syncProgress") && j["syncProgress"].is_boolean()) s.syncProgress = j["syncProgress"];
+    if (j.contains("uiScale") && j["uiScale"].is_number()) s.uiScale = j["uiScale"];
+    if (j.contains("hideSpoilers") && j["hideSpoilers"].is_boolean()) s.hideSpoilers = j["hideSpoilers"];
+    if (j.contains("showAdult") && j["showAdult"].is_boolean()) s.showAdult = j["showAdult"];
+    if (j.contains("dohUrl") && j["dohUrl"].is_string()) s.dohUrl = j["dohUrl"];
+    if (j.contains("discordClientId") && j["discordClientId"].is_string()) s.discordClientId = j["discordClientId"];
+    if (j.contains("discordPresence") && j["discordPresence"].is_boolean()) s.discordPresence = j["discordPresence"];
 }
 
 void loadSettings() {
@@ -295,6 +319,14 @@ void applySessionSettings(Engine& e, const Settings& cfg) {
                    "router.utorrent.com:6881,dht.transmissionbt.com:6881");
     }
     e.session.apply_settings(sp);
+
+    http::setDohUrl(cfg.dohUrl);
+    if (cfg.discordPresence && !cfg.discordClientId.empty()) {
+        discord::connect(cfg.discordClientId);
+    } else {
+        discord::clear();
+        discord::disconnect();
+    }
 }
 
 std::string findMpv() {
@@ -632,6 +664,7 @@ void playFile(Engine& e, int index) {
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     e.videoActive = false;
+    discord::clear();
     if (g_playbackHook) g_playbackHook(false);
 
     // Only count it as watched past 80%. Opening an episode and bailing after
@@ -703,6 +736,9 @@ void playFile(Engine& e, int index) {
 }  // namespace
 
 void shutdown() {
+    discord::clear();
+    discord::disconnect();
+
     Engine& e = engine();
     std::lock_guard<std::mutex> lock(e.mutex);
     if (!e.handle.is_valid()) return;
@@ -755,7 +791,13 @@ static void installRoutes(httplib::Server& server, Engine& e) {
             query.resolution = std::atoi(req.get_param_value("res").c_str());
         }
 
-        const auto matches = anilist::search(q);
+        const Settings pre = currentSettings();
+        auto matches = anilist::search(q);
+        if (!pre.showAdult) {
+            matches.erase(std::remove_if(matches.begin(), matches.end(),
+                                         [](const anilist::Media& m) { return m.isAdult; }),
+                          matches.end());
+        }
         if (!matches.empty()) {
             const auto& m = matches.front();
             query.title = m.preferred.empty() ? q : m.preferred;

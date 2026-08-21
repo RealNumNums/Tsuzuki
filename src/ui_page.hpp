@@ -205,6 +205,14 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
   }
   .steps a{color:var(--pink-soft)}
 
+  /* ---- spoilers ---- */
+  html[data-spoilers="hide"] .hero p,
+  html[data-spoilers="hide"] .ep .name{
+    filter:blur(5px);transition:filter .18s ease;
+  }
+  html[data-spoilers="hide"] .hero:hover p,
+  html[data-spoilers="hide"] .ep:hover .name{filter:none}
+
   /* ---- player control strip ---- */
   #playerbar{display:none}
   body.player{background:#0b0a12;min-height:0}
@@ -325,6 +333,7 @@ let prefs = {};
   try{
     prefs = await (await fetch('/api/settings')).json();
     applyTheme(prefs.theme);
+    applyPrefs(prefs);
     if(prefs.quality && $('#res')) $('#res').value = prefs.quality;
   }catch(e){}
 })();
@@ -691,6 +700,12 @@ const SETTING_ROWS = [
   ['disablePeX','toggle','Disable peer exchange','For private trackers. Greatly reduces peer discovery.'],
   ['anilistClientId','text','AniList client id','From anilist.co/settings/developer. No secret needed.'],
   ['syncProgress','toggle','Sync progress to AniList','Marks an episode watched once you pass 80% of it.'],
+  ['uiScale','number','Interface scale','1.0 is normal. Try 1.2 on a high-DPI screen.'],
+  ['hideSpoilers','toggle','Hide spoilers','Blurs synopses and episode titles until you hover them.'],
+  ['showAdult','toggle','Show adult results','Includes titles AniList flags as adult in search.'],
+  ['dohUrl','select','DNS over HTTPS','Routes lookups through a resolver, useful if your ISP blocks trackers.','=Off (system DNS)|https://cloudflare-dns.com/dns-query=Cloudflare|https://dns.google/dns-query=Google|https://dns.quad9.net/dns-query=Quad9'],
+  ['discordPresence','toggle','Discord rich presence','Shows what you are watching on your Discord profile.'],
+  ['discordClientId','text','Discord application id','From discord.com/developers. Only needed for rich presence.'],
 ];
 
 const THEMES = [
@@ -702,6 +717,13 @@ const THEMES = [
   ['amber','Amber','#100d07','#ffb020','#ffd98a'],
   ['lavender','Lavender','#15101f','#b794f6','#8fd8ff'],
 ];
+
+function applyPrefs(cfg){
+  const scale = parseFloat(cfg.uiScale);
+  document.documentElement.style.zoom = (isFinite(scale) && scale > 0) ? scale : 1;
+  if(cfg.hideSpoilers) document.documentElement.dataset.spoilers = 'hide';
+  else delete document.documentElement.dataset.spoilers;
+}
 
 function applyTheme(name){
   if(name && name !== 'tsuzuki') document.documentElement.dataset.theme = name;
@@ -780,8 +802,10 @@ async function showSettings(){
       else if(el.type === 'number') next[k] = parseFloat(el.value) || 0;
       else next[k] = el.value;
     });
-    await fetch('/api/settings', {method:'POST',headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(next)});
+    const saved = await (await fetch('/api/settings', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(next)})).json();
+    prefs = saved;
+    applyPrefs(saved);
     $('#sSaved').textContent = 'Saved.';
     setTimeout(() => { if($('#sSaved')) $('#sSaved').textContent = ''; }, 1600);
   };
