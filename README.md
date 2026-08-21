@@ -123,6 +123,17 @@ A rolling window then follows the playhead — read from mpv over IPC — keepin
 pieces ahead of playback at top priority, with deadlines that tighten as a
 piece gets closer to being needed.
 
+## Resuming
+
+Playback position is checkpointed every few seconds to
+`%LOCALAPPDATA%\Tsuzuki\progress.json` and passed back to mpv as `--start`.
+Ported from hayase-app/interface `watchProgress.ts`, which keeps one entry per
+anime - so opening episode 8 forgets where you were in episode 5. This keys on
+the episode too, and falls back to the torrent infohash when there is no
+AniList id, so plain magnets resume as well.
+
+Finishing an episode (past 90%) clears its resume point and syncs progress.
+
 ## Accounts
 
 Tsuzuki links to AniList and marks episodes watched once you pass 80% of them.

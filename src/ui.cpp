@@ -33,6 +33,7 @@
 #include "anilist.hpp"
 #include "http.hpp"
 #include "player.hpp"
+#include "progress.hpp"
 #include "scan.hpp"
 #include "sources/source.hpp"
 #include "discord.hpp"
@@ -274,10 +275,16 @@ void rememberWatched(const json& entry) {
     json next = json::array();
     next.push_back(entry);
     for (const auto& e : list) {
-        if (e.value("magnet", "") == entry.value("magnet", "") &&
-            e.value("file", "") == entry.value("file", "")) {
-            continue;
-        }
+        // Same show, same episode is the same watch as far as anyone cares -
+        // a second release of it is not a second row. Falls back to the magnet
+        // when there is no AniList id to match on.
+        const bool sameShow =
+            entry.value("anilistId", 0) > 0 &&
+            e.value("anilistId", 0) == entry.value("anilistId", 0) &&
+            e.value("episode", -1) == entry.value("episode", -2);
+        const bool sameFile = e.value("magnet", "") == entry.value("magnet", "") &&
+                              e.value("file", "") == entry.value("file", "");
+        if (sameShow || sameFile) continue;
         next.push_back(e);
         if (next.size() >= 40) break;
     }
@@ -566,6 +573,24 @@ void playFile(Engine& e, int index) {
 
     const std::string path = e.savePath + "/" + chosen->path;
 
+    // Resume where this episode was left, if it was left anywhere useful.
+    const int watchedEp = chosen->episode.valid && !chosen->episode.isRange()
+                              ? chosen->episode.from : 0;
+    // to_string() on a sha1_hash is twenty raw bytes, nulls and all - fine as
+    // a hash, fatal as a JSON key. Hex it.
+    std::string infoHex;
+    {
+        const lt::sha1_hash h = e.info->info_hashes().get_best();
+        static const char* digits = "0123456789abcdef";
+        for (const unsigned char b : h) {
+            infoHex.push_back(digits[b >> 4]);
+            infoHex.push_back(digits[b & 0x0F]);
+        }
+    }
+    const std::string progressKey =
+        progress::keyFor(e.anilistId, watchedEp, infoHex, chosen->index);
+    const progress::Position resume = progress::get(progressKey);
+
     std::string cmd = "\"" + findMpv() + "\"";
     if (g_videoHost) {
         // mpv draws straight into our window, so there is no second window and
@@ -577,6 +602,12 @@ void playFile(Engine& e, int index) {
     if (!cfg.audioLang.empty()) cmd += " --alang=" + cfg.audioLang;
     if (!cfg.subLang.empty()) cmd += " --slang=" + cfg.subLang;
     cmd += cfg.subsOn ? " --sub-visibility=yes" : " --sub-visibility=no";
+    if (progress::worthResuming(resume)) {
+        cmd += " --start=" + std::to_string(static_cast<long long>(resume.seconds));
+        e.setMessage("Resuming at " +
+                     std::to_string(static_cast<int>(resume.seconds) / 60) + "m" +
+                     std::to_string(static_cast<int>(resume.seconds) % 60) + "s");
+    }
     cmd += " --force-window=yes --cache=yes --demuxer-max-bytes=200MiB";
     cmd += " \"" + path + "\"";
 
@@ -633,7 +664,7 @@ void playFile(Engine& e, int index) {
     // Position comes from mpv itself over the IPC socket.
     const int windowPieces = std::max(2, bufferPieces);
     int lastWindowStart = firstPiece;
-    double lastPosition = 0, lastDuration = 0;
+    double lastPosition = 0, lastDuration = 0, lastSaved = 0;
 
     while (WaitForSingleObject(pi.hProcess, 500) == WAIT_TIMEOUT) {
         if (e.stopRequested) {
@@ -645,6 +676,19 @@ void playFile(Engine& e, int index) {
         if (!ps.running || ps.duration <= 0) continue;
         lastPosition = ps.position;
         lastDuration = ps.duration;
+
+        // Checkpoint every few seconds so closing mpv, or losing power, still
+        // leaves a usable place to come back to.
+        if (ps.position - lastSaved >= 5.0 || lastSaved == 0) {
+            lastSaved = ps.position;
+            progress::Position now;
+            now.known = true;
+            now.episode = watchedEp;
+            now.seconds = ps.position;
+            now.duration = ps.duration;
+            now.title = e.showTitle.empty() ? e.info->name() : e.showTitle;
+            progress::set(progressKey, now);
+        }
 
         const double fraction = std::min(1.0, ps.position / ps.duration);
         const std::int64_t offset = static_cast<std::int64_t>(fraction * chosen->size);
@@ -681,9 +725,20 @@ void playFile(Engine& e, int index) {
 
     // Only count it as watched past 80%. Opening an episode and bailing after
     // two minutes should not mark it done on someone's list.
-    const int watchedEpisode = chosen->episode.valid && !chosen->episode.isRange()
-                                   ? chosen->episode.from
-                                   : 0;
+    const bool finished = lastDuration > 0 && (lastPosition / lastDuration) >= 0.9;
+    if (finished) {
+        progress::clear(progressKey);
+    } else if (lastDuration > 0) {
+        progress::Position now;
+        now.known = true;
+        now.episode = watchedEp;
+        now.seconds = lastPosition;
+        now.duration = lastDuration;
+        now.title = e.showTitle.empty() ? e.info->name() : e.showTitle;
+        progress::set(progressKey, now);
+    }
+
+    const int watchedEpisode = watchedEp;
     if (cfg.syncProgress && e.anilistId > 0 && watchedEpisode > 0 &&
         lastDuration > 0 && (lastPosition / lastDuration) >= 0.8) {
         e.setMessage("Updating AniList...");
@@ -1158,6 +1213,21 @@ static void installRoutes(httplib::Server& server, Engine& e) {
         res.set_content(json(anilist::genres()).dump(), "application/json");
     });
 
+    server.Get("/api/resume", [](const httplib::Request& req, httplib::Response& res) {
+        const int id = req.has_param("anilistId")
+                           ? std::atoi(req.get_param_value("anilistId").c_str()) : 0;
+        const int ep = req.has_param("episode")
+                           ? std::atoi(req.get_param_value("episode").c_str()) : 0;
+        const progress::Position p = progress::get(progress::keyFor(id, ep, "", -1));
+        res.set_content(json{{"known", p.known},
+                             {"episode", p.episode},
+                             {"seconds", p.seconds},
+                             {"duration", p.duration},
+                             {"resumable", progress::worthResuming(p)}}
+                            .dump(),
+                        "application/json");
+    });
+
     server.Get("/api/lists", [](const httplib::Request&, httplib::Response& res) {
         json out = json::array();
         for (const auto& e : track::lists()) {
@@ -1277,6 +1347,7 @@ bool startBackground(int port, const std::string& savePath) {
     e.savePath = savePath;
     loadSettings();
     track::load();
+    progress::load();
     {
         const Settings cfg = currentSettings();
         if (!cfg.savePath.empty()) e.savePath = cfg.savePath;

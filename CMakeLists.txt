@@ -33,6 +33,7 @@ add_library(tsuzuki_core STATIC
   src/player.cpp
   src/track.cpp
   src/discord.cpp
+  src/progress.cpp
 )
 target_include_directories(tsuzuki_core PUBLIC src)
 target_link_libraries(tsuzuki_core PUBLIC
