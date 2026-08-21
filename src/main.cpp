@@ -1,9 +1,7 @@
-// Tsuzuki - milestone 1
+// Tsuzuki
 //
-//   tsuzuki "magnet:?xt=urn:btih:..." [--episode N] [--save-path DIR] [--keep]
-//
-// Fetches torrent metadata, maps every file to an episode with Anitomy, prints
-// the mapping, streams the file you pick, and hands it to mpv.
+//   tsuzuki <magnet|torrent> [--episode N] [--save-path DIR] [--keep]
+//   tsuzuki search "<title>" [--episode N] [--res 1080] [--save-path DIR] [--keep]
 //
 // Design rule, and the reason this exists: it never plays a file you did not
 // ask for. If the requested episode is missing or ambiguous, it says so and
@@ -28,13 +26,17 @@
 #include <thread>
 #include <vector>
 
+#include "anilist.hpp"
 #include "scan.hpp"
+#include "sources/source.hpp"
 
 namespace {
 
 struct Args {
-    std::string uri;
+    std::string mode = "play";  // "play" | "search"
+    std::string uri;            // magnet / torrent, or search text
     std::optional<int> episode;
+    std::optional<int> resolution;
     std::string savePath = "downloads";
     bool keep = false;
 };
@@ -43,14 +45,18 @@ std::optional<Args> parseArgs(int argc, char** argv) {
     Args a;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
-        if (arg == "--episode" && i + 1 < argc) {
+        if (arg == "search" && i == 1) {
+            a.mode = "search";
+        } else if (arg == "--episode" && i + 1 < argc) {
             a.episode = std::atoi(argv[++i]);
+        } else if (arg == "--res" && i + 1 < argc) {
+            a.resolution = std::atoi(argv[++i]);
         } else if (arg == "--save-path" && i + 1 < argc) {
             a.savePath = argv[++i];
         } else if (arg == "--keep") {
             a.keep = true;
         } else if (!arg.empty() && arg[0] != '-') {
-            a.uri = arg;
+            if (a.uri.empty()) a.uri = arg;
         }
     }
     if (a.uri.empty()) return std::nullopt;
@@ -58,8 +64,11 @@ std::optional<Args> parseArgs(int argc, char** argv) {
 }
 
 void usage() {
-    std::cout << "usage: tsuzuki <magnet-or-torrent> [--episode N] "
-                 "[--save-path DIR] [--keep]\n";
+    std::cout
+        << "usage:\n"
+           "  tsuzuki <magnet|torrent> [--episode N] [--save-path DIR] [--keep]\n"
+           "  tsuzuki search \"<title>\" [--episode N] [--res 1080] "
+           "[--save-path DIR] [--keep]\n";
 }
 
 // Installers rarely put mpv on PATH (winget's shinchiro.mpv drops it in
@@ -82,13 +91,152 @@ std::string findMpv() {
     return "mpv";
 }
 
+std::string humanSize(std::int64_t bytes) {
+    static const char* units[] = {"B", "K", "M", "G", "T"};
+    double v = static_cast<double>(bytes);
+    int u = 0;
+    while (v >= 1024.0 && u < 4) {
+        v /= 1024.0;
+        ++u;
+    }
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), v < 10.0 && u > 0 ? "%.1f%s" : "%.0f%s", v, units[u]);
+    return buf;
+}
+
+const char* accuracyLabel(tsuzuki::sources::Accuracy a) {
+    using tsuzuki::sources::Accuracy;
+    switch (a) {
+        case Accuracy::High: return "high";
+        case Accuracy::Medium: return "med";
+        default: return "low";
+    }
+}
+
+/* ------------------------------------------------------------ M2: search */
+
+// Returns a chosen magnet, or empty when the user backs out.
+std::string runSearch(const Args& args) {
+    namespace src = tsuzuki::sources;
+
+    src::Query q;
+    q.title = args.uri;
+    q.episode = args.episode;
+    q.resolution = args.resolution;
+
+    // AniList gives us the canonical title (better search hits) and the ID
+    // SeaDex is keyed by.
+    const auto matches = tsuzuki::anilist::search(args.uri);
+    if (!matches.empty()) {
+        const auto& m = matches.front();
+        q.title = m.preferred.empty() ? args.uri : m.preferred;
+        q.anilistId = m.id;
+        for (const auto& s : m.synonyms) q.altTitles.push_back(s);
+        std::cout << "anilist: " << q.title << " (#" << m.id << ", "
+                  << (m.episodes ? std::to_string(m.episodes) + " eps" : "ongoing")
+                  << ")\n";
+    } else {
+        std::cout << "anilist: no match, searching raw title\n";
+    }
+
+    std::cout << "searching sources...\n";
+    const std::vector<std::shared_ptr<src::Source>> sources = {
+        src::makeSeaDex(), src::makeAnimeTosho(), src::makeNyaa(), src::makeSubsPlease(),
+    };
+    const auto results = src::searchAll(sources, q);
+
+    if (results.empty()) {
+        std::cerr << "no results.\n";
+        return {};
+    }
+
+    std::printf("\n  %-3s %-5s %-6s %-52s %8s %6s\n", "#", "ACC", "SEED", "TITLE", "SIZE",
+                "SOURCE");
+    std::printf("  %s\n", std::string(88, '-').c_str());
+    int i = 0;
+    for (const auto& r : results) {
+        std::string label = r.title;
+        if (label.size() > 52) label = label.substr(0, 49) + "...";
+        const std::string seed = r.seeders ? std::to_string(r.seeders) : "-";
+        std::printf("  %-3d %-5s %-6s %-52s %8s %6s\n", i,
+                    r.curatedBest ? "BEST" : accuracyLabel(r.accuracy), seed.c_str(),
+                    label.c_str(), humanSize(r.size).c_str(), r.sourceId.c_str());
+        ++i;
+        if (i >= 25) break;
+    }
+    std::printf("\n");
+
+    std::cout << "pick a # to open (or blank to quit): " << std::flush;
+    std::string line;
+    std::getline(std::cin >> std::ws, line);
+    if (line.empty()) return {};
+
+    const int pickIdx = std::atoi(line.c_str());
+    if (pickIdx < 0 || pickIdx >= static_cast<int>(results.size())) {
+        std::cerr << "no such result\n";
+        return {};
+    }
+    return results[pickIdx].magnet;
+}
+
+/* --------------------------------------------------- M4: verified cleanup */
+
+// Hayase leaks torrent data when a delete races the player's file handles, and
+// never checks. So: ask libtorrent to delete, wait for the alert that says
+// whether it worked, and confirm on disk before claiming success.
+void cleanUp(lt::session& session, lt::torrent_handle& handle, const std::string& path) {
+    if (!handle.is_valid()) return;
+
+    session.remove_torrent(handle, lt::session::delete_files);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    bool resolved = false;
+    bool deleted = false;
+    std::string failure;
+
+    while (!resolved && std::chrono::steady_clock::now() < deadline) {
+        std::vector<lt::alert*> alerts;
+        session.pop_alerts(&alerts);
+        for (const lt::alert* a : alerts) {
+            if (lt::alert_cast<lt::torrent_deleted_alert>(a)) {
+                deleted = true;
+                resolved = true;
+            } else if (const auto* f = lt::alert_cast<lt::torrent_delete_failed_alert>(a)) {
+                failure = f->error.message();
+                resolved = true;
+            }
+        }
+        if (!resolved) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+
+    std::error_code ec;
+    const bool stillThere = std::filesystem::exists(path, ec);
+
+    if (deleted && !stillThere) {
+        std::cout << "cleaned up.\n";
+    } else if (stillThere) {
+        // Report the actual state rather than assuming the request worked.
+        std::cerr << "cleanup incomplete: " << path << " still exists"
+                  << (failure.empty() ? "" : " (" + failure + ")")
+                  << "\ndelete it manually, or re-run with --keep if that was intended.\n";
+    } else if (!resolved) {
+        std::cerr << "cleanup unconfirmed: no result within 20s.\n";
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
-    const auto args = parseArgs(argc, argv);
+    auto args = parseArgs(argc, argv);
     if (!args) {
         usage();
         return 1;
+    }
+
+    if (args->mode == "search") {
+        const std::string magnet = runSearch(*args);
+        if (magnet.empty()) return 1;
+        args->uri = magnet;
     }
 
     lt::session session;
@@ -121,7 +269,7 @@ int main(int argc, char** argv) {
     // the deprecated ABI block, which vcpkg's build compiles out.
     const lt::file_storage& fs = info->layout();
     std::vector<std::pair<std::string, std::int64_t>> files;
-    files.reserve((std::size_t)fs.num_files());
+    files.reserve(static_cast<std::size_t>(fs.num_files()));
     for (int i = 0; i < fs.num_files(); ++i) {
         const lt::file_index_t fi{i};
         files.emplace_back(fs.file_path(fi), fs.file_size(fi));
@@ -185,8 +333,8 @@ int main(int argc, char** argv) {
     const int lastPiece = static_cast<int>(
         info->map_file(fidx, std::max<std::int64_t>(chosen->size - 1, 0), 0).piece);
 
-    const int headPieces =
-        std::max(1, static_cast<int>((std::min(kBufferBytes, chosen->size) + pieceLen - 1) / pieceLen));
+    const int headPieces = std::max(
+        1, static_cast<int>((std::min(kBufferBytes, chosen->size) + pieceLen - 1) / pieceLen));
 
     std::vector<int> needed;
     for (int p = firstPiece; p <= std::min(firstPiece + headPieces - 1, lastPiece); ++p) {
@@ -222,10 +370,10 @@ int main(int argc, char** argv) {
     std::cout << "launching: " << cmd << "\n";
     std::system(cmd.c_str());
 
-    if (!args->keep) {
-        // Milestone 4 lands here: remove_torrent with delete_files, and verify
-        // it actually happened rather than assuming (Hayase leaks on locks).
-        std::cout << "(--keep not set; cleanup lands in M4)\n";
+    if (args->keep) {
+        std::cout << "kept: " << path << "\n";
+    } else {
+        cleanUp(session, handle, args->savePath + "/" + info->name());
     }
 
     return 0;

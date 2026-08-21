@@ -35,6 +35,7 @@ struct Query {
     std::optional<int> episode;
     std::optional<int> season;
     std::optional<int> resolution;  // 1080, 720, ...
+    std::optional<int> anilistId;   // SeaDex is keyed by AniList ID, not title
     bool batch = false;             // looking for a season pack
     bool exclusive = false;         // only trusted/best releases
 };
@@ -51,6 +52,10 @@ struct Result {
     std::string date;       // ISO 8601
     Accuracy accuracy = Accuracy::Medium;
     std::string sourceId;   // which source produced this
+    // Curated "this is the best encode" pick (SeaDex). These carry no seeder
+    // counts, so without an explicit flag they sort to the bottom - which
+    // would waste the one source that actually knows which release is good.
+    bool curatedBest = false;
 };
 
 class Source {

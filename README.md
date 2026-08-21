@@ -58,10 +58,16 @@ is reported, not papered over.
   - verified end to end against a public-domain magnet: metadata fetch,
     video filtering, Anitomy mapping, refuse-to-guess (exit 2), head+tail
     buffering, and mpv playback while still downloading
-- [ ] **M2** — native torrent sources (Nyaa, SeaDex, AnimeTosho, nekoBT, SubsPlease)
-- [ ] **M3** — AniList metadata; mappings cached by `(infohash, file_index)` and user-correctable
-- [ ] **M4** — verified delete-on-exit
-- [ ] **M5** — GUI, embedded libmpv, libass subtitles
+- [x] **M2** — native torrent sources: Nyaa (RSS), AnimeTosho (JSON), SubsPlease
+  (JSON), SeaDex (PocketBase, by AniList ID). Merged and deduped by infohash.
+  nekoBT is HTML-only with no API and is cross-indexed by AnimeTosho, so it is
+  intentionally not implemented.
+- [x] **M3** — AniList GraphQL title resolution (canonical title + the ID SeaDex
+  is keyed by)
+- [x] **M4** — delete-on-exit, verified via `torrent_deleted_alert` **and** a
+  filesystem check; reports honestly when cleanup does not happen
+- [ ] **M5** — GUI, embedded libmpv, libass subtitles *(not started; this is
+  days of work, not an afternoon)*
 
 M1 deliberately shells out to `mpv` rather than embedding libmpv: libtorrent
 writes to disk and mpv plays a growing file happily, which keeps the first
@@ -79,6 +85,8 @@ Requires vcpkg with `VCPKG_ROOT` set; dependencies come from `vcpkg.json`.
 ## Usage
 
 ```
+tsuzuki search "frieren" --res 1080            # search every source, pick one
+tsuzuki search "frieren" --episode 5           # ...and jump straight to ep 5
 tsuzuki "magnet:?xt=urn:btih:..."              # show the table, pick a file
 tsuzuki "magnet:?..." --episode 5              # play episode 5, or fail loudly
 tsuzuki "magnet:?..." --episode 5 --keep       # don't clean up afterwards

@@ -25,6 +25,9 @@ target_include_directories(anitomy PUBLIC ${anitomy_SOURCE_DIR})
 add_executable(tsuzuki
   src/main.cpp
   src/scan.cpp
+  src/http.cpp
+  src/anilist.cpp
+  src/sources/sources.cpp
 )
 
 target_include_directories(tsuzuki PRIVATE src)
