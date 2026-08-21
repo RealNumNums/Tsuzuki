@@ -1,6 +1,12 @@
+<img src="assets/logo.svg" width="96" align="left" alt="Tsuzuki logo">
+
 # Tsuzuki (続き)
 
 *"To be continued."* A native anime torrent streaming client.
+
+<br clear="left">
+
+<img src="assets/mascot.svg" width="150" align="right" alt="Tsuzuki mascot">
 
 Named for the card at the end of an episode, because the thing that started
 this project was a client that kept playing the wrong continuation.
