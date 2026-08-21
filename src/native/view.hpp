@@ -11,6 +11,7 @@
 // a tool: rounded cards, cover art, gradient scrims, hover lift.
 
 #include "../settings.hpp"
+#include "../ui.hpp"
 #include "gfx.hpp"
 
 #include <string>
@@ -109,6 +110,13 @@ struct State {
     unsigned draftAt = 0;
     // Which text field has the caret. Zero means none.
     int focusField = 0;
+
+    // Answers from the last search and the last torrent opened. Kept here
+    // rather than re-fetched per frame - both cost seconds on the network.
+    ui::SearchOutcome results;
+    bool searchDone = false;
+    ui::OpenOutcome opened;
+    bool openDone = false;
 };
 
 // Draws the current screen. Returns true if another frame is wanted soon
@@ -117,6 +125,10 @@ bool frame(Ui&, State&);
 
 // Defined in settings_screen.cpp.
 bool settingsScreen(Ui&, State&);
+
+// Defined in browse_screens.cpp.
+bool resultsScreen(Ui&, State&);
+bool episodesScreen(Ui&, State&);
 
 // Shared bits the screens use.
 std::wstring widen(const std::string&);

@@ -23,6 +23,7 @@
 #include <string>
 
 #include "native/gfx.hpp"
+#include "native/async.hpp"
 #include "native/images.hpp"
 #include "native/view.hpp"
 #include "ui.hpp"
@@ -486,6 +487,9 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int showCmd) {
         fatal(hwnd, L"Could not create the Direct2D render target.");
         return 1;
     }
+    tsuzuki::async::init([] {
+        if (g_main) PostMessageW(g_main, WM_IMAGE_READY, 0, 0);
+    });
     tsuzuki::images::start(&g_canvas, [] {
         if (g_main) PostMessageW(g_main, WM_IMAGE_READY, 0, 0);
     });

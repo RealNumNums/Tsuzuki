@@ -3,6 +3,7 @@
 #include "../library.hpp"
 #include "../track.hpp"
 #include "../ui.hpp"
+#include "async.hpp"
 #include "images.hpp"
 
 #include <algorithm>
@@ -334,7 +335,10 @@ bool home(Ui& u, State& st) {
                 st.openMagnet = widen(e.magnet);
                 st.resumeEpisode = e.episode;
                 st.resumeSeconds = e.currentTime;
+                st.openDone = false;
+                st.searchDone = false;
                 st.screen = Screen::Episodes;
+                async::open(e.magnet, e.episode, e.anilistId);
             }
         }
         const int rows = (static_cast<int>(cont.size()) + g.cols - 1) / g.cols;
@@ -396,7 +400,9 @@ bool home(Ui& u, State& st) {
                 swprintf(ep, 16, L"%d", e.nextEpisode);
                 st.episodeWanted = ep;
                 st.lastAnilistId = e.mediaId;
+                st.searchDone = false;
                 st.screen = Screen::Results;
+                async::search(e.title, 0);
             }
         }
         const int rows = (static_cast<int>(watching.size()) + g.cols - 1) / g.cols;
@@ -443,7 +449,10 @@ bool home(Ui& u, State& st) {
             if (clicked) {
                 st.lastAnilistId = h.anilistId;
                 st.openMagnet = widen(h.magnet);
+                st.openDone = false;
+                st.searchDone = false;
                 st.screen = Screen::Episodes;
+                async::open(h.magnet, h.episode, h.anilistId);
             }
             y += 66 + 9;
         }
@@ -469,17 +478,31 @@ bool frame(Ui& u, State& st) {
     switch (st.screen) {
         case Screen::Home: wantMore = home(u, st); break;
         case Screen::Settings: wantMore = settingsScreen(u, st); break;
-        default:
-            u.c.text(L"Coming next: results, episodes, settings.",
-                     {kPad, kHeaderH + 60, full.w - kPad * 2, 24}, dim, f(14));
-            break;
+        case Screen::Results: wantMore = resultsScreen(u, st); break;
+        case Screen::Episodes: wantMore = episodesScreen(u, st); break;
+        default: break;
     }
 
     u.c.popClip();
     u.hitTop = 0;
 
     if (header(u, st) && !st.query.empty()) {
-        st.screen = Screen::Results;
+        // A magnet link pasted into the search box skips straight to the
+        // file list - there is nothing to look up.
+        const std::wstring q = st.query;
+        const int wantEp = st.episodeWanted.empty() ? 0 : _wtoi(st.episodeWanted.c_str());
+        if (q.rfind(L"magnet:", 0) == 0) {
+            st.openMagnet = q;
+            st.lastAnilistId = 0;
+            st.openDone = false;
+            st.searchDone = false;
+            st.screen = Screen::Episodes;
+            async::open(narrow(q), wantEp, 0);
+        } else {
+            st.searchDone = false;
+            st.screen = Screen::Results;
+            async::search(narrow(q), 0);
+        }
     }
 
     u.endFrame();

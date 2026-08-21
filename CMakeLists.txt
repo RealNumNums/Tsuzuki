@@ -38,6 +38,8 @@ add_library(tsuzuki_core STATIC
   src/native/images.cpp
   src/native/view.cpp
   src/native/settings_screen.cpp
+  src/native/browse_screens.cpp
+  src/native/async.cpp
 )
 target_include_directories(tsuzuki_core PUBLIC src)
 target_link_libraries(tsuzuki_core PUBLIC
