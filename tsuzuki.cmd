@@ -9,7 +9,7 @@ REM Downloads default to %TEMP%\tsuzuki and are deleted after playback unless
 REM you pass --keep.
 
 setlocal
-set "TSUZUKI_EXE=%~dp0buildRelease	suzuki.exe"
+set "TSUZUKI_EXE=%~dp0build\Release\tsuzuki.exe"
 
 if not exist "%TSUZUKI_EXE%" (
   echo.
