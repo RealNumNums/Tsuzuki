@@ -59,7 +59,8 @@ Response get(const std::string& url, int timeoutSeconds) {
     return r;
 }
 
-Response postJson(const std::string& url, const std::string& body, int timeoutSeconds) {
+Response postJson(const std::string& url, const std::string& body, int timeoutSeconds,
+                  const std::string& bearerToken) {
     globalInit();
 
     Response r;
@@ -72,6 +73,11 @@ Response postJson(const std::string& url, const std::string& body, int timeoutSe
     curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
     headers = curl_slist_append(headers, "Accept: application/json");
+    std::string auth;
+    if (!bearerToken.empty()) {
+        auth = "Authorization: Bearer " + bearerToken;
+        headers = curl_slist_append(headers, auth.c_str());
+    }
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());

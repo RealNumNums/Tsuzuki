@@ -123,6 +123,22 @@ A rolling window then follows the playhead — read from mpv over IPC — keepin
 pieces ahead of playback at top priority, with deadlines that tighten as a
 piece gets closer to being needed.
 
+## Accounts
+
+Tsuzuki links to AniList and marks episodes watched once you pass 80% of them.
+
+It does not ship a client id. AniList issues those per application, and
+embedding one would mean borrowing someone else's identity. Register your own,
+once:
+
+1. Open [anilist.co/settings/developer](https://anilist.co/settings/developer) and create a client
+2. Set the redirect URL to `http://127.0.0.1:7654/auth/anilist`
+3. Paste the client id into Settings → Account. The secret is not needed.
+
+Linking uses the implicit grant, so no secret is ever stored. The token lives in
+`%LOCALAPPDATA%\Tsuzuki\auth.json` and is cleared automatically if AniList
+stops accepting it.
+
 ## Licence note
 
 libtorrent and mpv are GPL-family; Anitomy is permissive. That shapes

@@ -186,6 +186,25 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
   .sw{display:flex;gap:5px}
   .sw i{width:22px;height:22px;border-radius:6px;display:block}
 
+  /* ---- account ---- */
+  .acct{display:flex;align-items:center;gap:14px;padding:16px}
+  .acct img{width:52px;height:52px;border-radius:10px;object-fit:cover;flex:none}
+  .acct .who{flex:1;min-width:0}
+  .acct .who b{display:block;font-size:15px}
+  .acct .who span{color:var(--dim);font-size:12.5px}
+  .acct .dot{
+    width:9px;height:9px;border-radius:50%;background:var(--ok);flex:none;
+    box-shadow:0 0 0 3px rgba(83,218,51,.16);
+  }
+  .acct .dot.off{background:var(--dim);box-shadow:0 0 0 3px rgba(154,148,189,.14)}
+  .steps{padding:0 16px 16px;color:var(--dim);font-size:12.5px;line-height:1.7}
+  .steps ol{margin:6px 0 0;padding-left:20px}
+  .steps code{
+    background:var(--panel-2);border:1px solid var(--line);border-radius:5px;
+    padding:2px 6px;font-size:11.5px;color:var(--cyan);
+  }
+  .steps a{color:var(--pink-soft)}
+
   /* ---- player control strip ---- */
   #playerbar{display:none}
   body.player{background:#0b0a12;min-height:0}
@@ -670,6 +689,8 @@ const SETTING_ROWS = [
   ['dhtPort','number','DHT port','0 is automatic.'],
   ['disableDHT','toggle','Disable DHT and LSD','For private trackers. Greatly reduces peer discovery.'],
   ['disablePeX','toggle','Disable peer exchange','For private trackers. Greatly reduces peer discovery.'],
+  ['anilistClientId','text','AniList client id','From anilist.co/settings/developer. No secret needed.'],
+  ['syncProgress','toggle','Sync progress to AniList','Marks an episode watched once you pass 80% of it.'],
 ];
 
 const THEMES = [
@@ -690,8 +711,35 @@ function applyTheme(name){
 async function showSettings(){
   let cfg = {};
   try{ cfg = await (await fetch('/api/settings')).json(); }catch(e){}
-  let html = '<button class="back" id="sBack">&larr; Back</button>' +
-             '<div class="panel"><h3>Appearance</h3><div class="themes">';
+  let acct = {};
+  try{ acct = await (await fetch('/api/account')).json(); }catch(e){}
+
+  let html = '<button class="back" id="sBack">&larr; Back</button>';
+
+  html += '<div class="panel"><h3>Account</h3><div class="acct">';
+  if(acct.linked){
+    html += (acct.avatar ? '<img src="'+esc(acct.avatar)+'" alt="">' : '')+
+      '<div class="who"><b>'+esc(acct.name)+'</b><span>AniList &middot; linked</span></div>'+
+      '<span class="dot"></span>'+
+      '<button class="pb" id="aOut" style="background:var(--panel-2);border:1px solid var(--line);color:var(--ink)">Unlink</button>';
+  } else {
+    html += '<div class="who"><b>Not linked</b><span>AniList</span></div>'+
+      '<span class="dot off"></span>'+
+      '<button id="aIn">Link AniList</button>';
+  }
+  html += '</div>';
+
+  if(!acct.hasClientId){
+    html += '<div class="steps">Linking needs a client id of your own - AniList issues these per app, '+
+      'and Tsuzuki does not ship one.<ol>'+
+      '<li>Open <a href="https://anilist.co/settings/developer" target="_blank">anilist.co/settings/developer</a> and create a client.</li>'+
+      '<li>Set the redirect URL to <code>http://127.0.0.1:7654/auth/anilist</code></li>'+
+      '<li>Paste the client id into the field below. The secret is not needed.</li>'+
+      '</ol></div>';
+  }
+  html += '</div>';
+
+  html += '<div class="panel"><h3>Appearance</h3><div class="themes">';
   for(const [id,label,bg,accent,second] of THEMES){
     const sel = (cfg.theme||'tsuzuki') === id ? ' sel' : '';
     html += '<div class="theme'+sel+'" data-theme-id="'+id+'" style="background:'+bg+'">'+
@@ -737,6 +785,28 @@ async function showSettings(){
     $('#sSaved').textContent = 'Saved.';
     setTimeout(() => { if($('#sSaved')) $('#sSaved').textContent = ''; }, 1600);
   };
+  if($('#aIn')) $('#aIn').onclick = async () => {
+    let r = {};
+    try{ r = await (await fetch('/api/account/login',{method:'POST'})).json(); }catch(e){}
+    if(!r.ok){
+      $('#sSaved').textContent = r.error || 'Could not start linking.';
+      return;
+    }
+    $('#sSaved').textContent = 'Approve Tsuzuki in the browser tab that just opened...';
+    // The browser hands the token back to the engine, so poll until it lands.
+    let tries = 0;
+    const timer = setInterval(async () => {
+      let a = {};
+      try{ a = await (await fetch('/api/account')).json(); }catch(e){}
+      if(a.linked || ++tries > 60){ clearInterval(timer); showSettings(); }
+    }, 2000);
+  };
+
+  if($('#aOut')) $('#aOut').onclick = async () => {
+    await fetch('/api/account/logout',{method:'POST'});
+    showSettings();
+  };
+
   document.querySelectorAll('.theme[data-theme-id]').forEach(el =>
     el.onclick = async () => {
       const id = el.dataset.themeId;

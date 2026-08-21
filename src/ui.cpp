@@ -34,6 +34,7 @@
 #include "player.hpp"
 #include "scan.hpp"
 #include "sources/source.hpp"
+#include "track.hpp"
 #include "ui_page.hpp"
 
 namespace tsuzuki::ui {
@@ -123,6 +124,10 @@ struct Settings {
     int dhtPort = 0;
     bool disableDHT = false;
     bool disablePeX = false;
+
+    // Accounts
+    std::string anilistClientId;
+    bool syncProgress = true;
 };
 
 Settings g_settings;
@@ -154,7 +159,9 @@ json settingsToJson(const Settings& s) {
                 {"torrentPort", s.torrentPort},
                 {"dhtPort", s.dhtPort},
                 {"disableDHT", s.disableDHT},
-                {"disablePeX", s.disablePeX}};
+                {"disablePeX", s.disablePeX},
+                {"anilistClientId", s.anilistClientId},
+                {"syncProgress", s.syncProgress}};
 }
 
 void settingsFromJson(const json& j, Settings& s) {
@@ -176,6 +183,8 @@ void settingsFromJson(const json& j, Settings& s) {
     if (j.contains("dhtPort") && j["dhtPort"].is_number()) s.dhtPort = j["dhtPort"];
     if (j.contains("disableDHT") && j["disableDHT"].is_boolean()) s.disableDHT = j["disableDHT"];
     if (j.contains("disablePeX") && j["disablePeX"].is_boolean()) s.disablePeX = j["disablePeX"];
+    if (j.contains("anilistClientId") && j["anilistClientId"].is_string()) s.anilistClientId = j["anilistClientId"];
+    if (j.contains("syncProgress") && j["syncProgress"].is_boolean()) s.syncProgress = j["syncProgress"];
 }
 
 void loadSettings() {
@@ -238,6 +247,17 @@ void rememberWatched(const json& entry) {
     }
     std::ofstream out(historyPath());
     if (out) out << next.dump(2) << "\n";
+}
+
+// Linking has to happen in the real browser: that is where the AniList
+// session already is, and it is the only place the user can see what they are
+// approving.
+void openExternal(const std::string& url) {
+#ifdef _WIN32
+    ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+    std::system(("xdg-open " + url).c_str());
+#endif
 }
 
 void* g_videoHost = nullptr;
@@ -569,6 +589,7 @@ void playFile(Engine& e, int index) {
     // Position comes from mpv itself over the IPC socket.
     const int windowPieces = std::max(2, bufferPieces);
     int lastWindowStart = firstPiece;
+    double lastPosition = 0, lastDuration = 0;
 
     while (WaitForSingleObject(pi.hProcess, 500) == WAIT_TIMEOUT) {
         if (e.stopRequested) {
@@ -578,6 +599,8 @@ void playFile(Engine& e, int index) {
 
         const player::State ps = player::state();
         if (!ps.running || ps.duration <= 0) continue;
+        lastPosition = ps.position;
+        lastDuration = ps.duration;
 
         const double fraction = std::min(1.0, ps.position / ps.duration);
         const std::int64_t offset = static_cast<std::int64_t>(fraction * chosen->size);
@@ -610,6 +633,19 @@ void playFile(Engine& e, int index) {
     CloseHandle(pi.hThread);
     e.videoActive = false;
     if (g_playbackHook) g_playbackHook(false);
+
+    // Only count it as watched past 80%. Opening an episode and bailing after
+    // two minutes should not mark it done on someone's list.
+    const int watchedEpisode = chosen->episode.valid && !chosen->episode.isRange()
+                                   ? chosen->episode.from
+                                   : 0;
+    if (cfg.syncProgress && e.anilistId > 0 && watchedEpisode > 0 &&
+        lastDuration > 0 && (lastPosition / lastDuration) >= 0.8) {
+        e.setMessage("Updating AniList...");
+        if (track::updateProgress(e.anilistId, watchedEpisode)) {
+            e.setMessage("AniList updated to episode " + std::to_string(watchedEpisode));
+        }
+    }
 
     // Remove only the episode just watched, and keep the torrent open. Tearing
     // the whole torrent down here meant the file list on screen pointed at
@@ -869,6 +905,75 @@ static void installRoutes(httplib::Server& server, Engine& e) {
         res.set_content("{\"ok\":true}", "application/json");
     });
 
+    // The page AniList redirects back to. The token arrives in the URL
+    // fragment, which browsers never send to a server, so a little script has
+    // to hand it over.
+    server.Get("/auth/anilist", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(
+            "<!doctype html><meta charset=utf-8><title>Tsuzuki</title>"
+            "<style>body{background:#0e0d17;color:#ece9f7;font:15px system-ui;"
+            "display:flex;align-items:center;justify-content:center;height:100vh;margin:0}"
+            "div{text-align:center}b{color:#ff5c8d}</style>"
+            "<div><p id=m>Linking your account...</p></div><script>"
+            "const h=new URLSearchParams(location.hash.slice(1));"
+            "const t=h.get('access_token');"
+            "if(t){fetch('/api/account/token',{method:'POST',"
+            "headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t})})"
+            ".then(()=>{document.getElementById('m').innerHTML="
+            "'<b>Account linked.</b><br>You can close this tab and go back to Tsuzuki.';})"
+            ".catch(()=>{document.getElementById('m').textContent='Could not reach Tsuzuki.';});}"
+            "else{document.getElementById('m').textContent="
+            "'No token came back from AniList. Try linking again.';}"
+            "</script>",
+            "text/html; charset=utf-8");
+    });
+
+    server.Post("/api/account/token", [](const httplib::Request& req, httplib::Response& res) {
+        json in;
+        try {
+            in = json::parse(req.body);
+        } catch (const std::exception&) {
+            res.set_content("{\"ok\":false}", "application/json");
+            return;
+        }
+        const std::string tok = in.value("token", "");
+        if (!tok.empty()) track::setToken(tok);
+        res.set_content(json{{"ok", !tok.empty()}}.dump(), "application/json");
+    });
+
+    server.Get("/api/account", [](const httplib::Request&, httplib::Response& res) {
+        const track::Account a = track::account();
+        const Settings cfg = currentSettings();
+        res.set_content(json{{"linked", a.linked},
+                             {"name", a.name},
+                             {"avatar", a.avatar},
+                             {"hasClientId", !cfg.anilistClientId.empty()},
+                             {"syncProgress", cfg.syncProgress}}
+                            .dump(),
+                        "application/json");
+    });
+
+    server.Post("/api/account/login", [](const httplib::Request&, httplib::Response& res) {
+        const Settings cfg = currentSettings();
+        const std::string url = track::authorizeUrl(cfg.anilistClientId, 7654);
+        if (url.empty()) {
+            res.set_content(
+                json{{"ok", false},
+                     {"error",
+                      "Add your AniList client id in Settings first."}}
+                    .dump(),
+                "application/json");
+            return;
+        }
+        openExternal(url);
+        res.set_content(json{{"ok", true}, {"url", url}}.dump(), "application/json");
+    });
+
+    server.Post("/api/account/logout", [](const httplib::Request&, httplib::Response& res) {
+        track::logout();
+        res.set_content("{\"ok\":true}", "application/json");
+    });
+
     server.Get("/api/history", [](const httplib::Request&, httplib::Response& res) {
         res.set_content(loadHistory().dump(), "application/json");
     });
@@ -971,6 +1076,7 @@ bool startBackground(int port, const std::string& savePath) {
     Engine& e = engine();
     e.savePath = savePath;
     loadSettings();
+    track::load();
     {
         const Settings cfg = currentSettings();
         if (!cfg.savePath.empty()) e.savePath = cfg.savePath;

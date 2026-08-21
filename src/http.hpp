@@ -18,7 +18,8 @@ struct Response {
 Response get(const std::string& url, int timeoutSeconds = 20);
 
 // POST with a JSON body (AniList's GraphQL endpoint).
-Response postJson(const std::string& url, const std::string& body, int timeoutSeconds = 20);
+Response postJson(const std::string& url, const std::string& body, int timeoutSeconds = 20,
+                  const std::string& bearerToken = "");
 
 // Percent-encode a query parameter value.
 std::string urlEncode(const std::string& s);
