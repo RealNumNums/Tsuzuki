@@ -48,6 +48,7 @@ is reported, not papered over.
 | Torrent | libtorrent-rasterbar |
 | Filename parsing | Anitomy (native C++, vendored via FetchContent) |
 | HTTP / JSON / XML | libcurl, nlohmann-json, pugixml |
+| UI | HTML served on 127.0.0.1 via cpp-httplib |
 | Playback | mpv subprocess now; libmpv + libass later |
 | Build | CMake + vcpkg manifest mode, MSVC |
 
@@ -66,8 +67,10 @@ is reported, not papered over.
   is keyed by)
 - [x] **M4** — delete-on-exit, verified via `torrent_deleted_alert` **and** a
   filesystem check; reports honestly when cleanup does not happen
-- [ ] **M5** — GUI, embedded libmpv, libass subtitles *(not started; this is
-  days of work, not an afternoon)*
+- [x] **M5** — browser UI served from the binary (cpp-httplib on 127.0.0.1),
+  with the logo and mascot; double-clicking the exe opens it. Native toolkit
+  deferred: HTML avoids a multi-hour Qt build and looks better. Embedded
+  libmpv + libass still to come.
 
 M1 deliberately shells out to `mpv` rather than embedding libmpv: libtorrent
 writes to disk and mpv plays a growing file happily, which keeps the first
@@ -90,6 +93,7 @@ launcher defaults `--save-path` to `%TEMP%	suzuki`; downloads are removed
 after playback unless you pass `--keep`.
 
 ```
+tsuzuki ui                                    # open the browser interface
 tsuzuki search "frieren" --res 1080            # search every source, pick one
 tsuzuki search "frieren" --episode 5           # ...and jump straight to ep 5
 tsuzuki "magnet:?xt=urn:btih:..."              # show the table, pick a file

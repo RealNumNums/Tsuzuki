@@ -31,6 +31,7 @@
 #endif
 
 #include "anilist.hpp"
+#include "ui.hpp"
 #include "scan.hpp"
 #include "sources/source.hpp"
 
@@ -79,6 +80,9 @@ std::optional<Args> parseArgs(int argc, char** argv) {
         // launcher script prepends --save-path, so it is not always argv[1].
         if (arg == "search" && a.mode == "play" && a.uri.empty()) {
             a.mode = "search";
+        } else if (arg == "ui" && a.mode == "play" && a.uri.empty()) {
+            a.mode = "ui";
+            a.uri = "ui";
         } else if (arg == "--episode" && i + 1 < argc) {
             a.episode = std::atoi(argv[++i]);
         } else if (arg == "--res" && i + 1 < argc) {
@@ -313,44 +317,17 @@ void cleanUp(lt::session& session, lt::torrent_handle& handle, const std::string
 
 }  // namespace
 
-// Double-clicked with no arguments: ask for what we need rather than printing
-// a usage line into a window that is about to disappear.
-std::optional<Args> promptForArgs() {
-    Args a;
-    a.mode = "search";
-
-    std::cout << "\n  Tsuzuki - anime torrent streaming\n"
-                 "  ---------------------------------\n\n"
-                 "  Downloads are deleted after you finish watching.\n"
-                 "  Needs mpv installed.\n\n";
-
-    std::cout << "  Anime title (blank to quit): " << std::flush;
-    std::string title;
-    if (!std::getline(std::cin, title) || title.empty()) return std::nullopt;
-    a.uri = title;
-
-    std::cout << "  Episode number (blank = choose from a list): " << std::flush;
-    std::string ep;
-    std::getline(std::cin, ep);
-    if (!ep.empty()) {
-        const int n = std::atoi(ep.c_str());
-        if (n > 0) a.episode = n;
-    }
-
-    if (const char* tmp = std::getenv("TEMP")) {
-        a.savePath = std::string(tmp) + "\\tsuzuki";
-    }
-    std::cout << "\n";
-    return a;
-}
-
 int main(int argc, char** argv) {
     PauseOnExit keepOpen{ownsConsole()};
 
     std::optional<Args> args;
     if (argc <= 1 && keepOpen.active) {
-        args = promptForArgs();
-        if (!args) return 0;
+        // Double-clicked from Explorer: that means "just open the thing", so
+        // start the UI rather than interrogating them in a console window.
+        Args a;
+        a.mode = "ui";
+        a.uri = "ui";
+        args = a;
     } else {
         args = parseArgs(argc, argv);
     }
@@ -358,6 +335,15 @@ int main(int argc, char** argv) {
     if (!args) {
         usage();
         return 1;
+    }
+
+    if (args->mode == "ui") {
+        keepOpen.active = false;  // the server prints its own URL and blocks
+        std::string path = args->savePath;
+        if (path == "downloads") {
+            if (const char* tmp = std::getenv("TEMP")) path = std::string(tmp) + "\\tsuzuki";
+        }
+        return tsuzuki::ui::run(7654, path);
     }
 
     if (args->mode == "search") {

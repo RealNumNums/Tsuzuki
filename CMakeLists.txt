@@ -8,6 +8,7 @@ find_package(LibtorrentRasterbar CONFIG REQUIRED)
 find_package(CURL REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(pugixml CONFIG REQUIRED)
+find_package(httplib CONFIG REQUIRED)
 
 # Anitomy has no vcpkg port and ships no usable CMake target, so vendor it.
 include(FetchContent)
@@ -28,6 +29,7 @@ add_executable(tsuzuki
   src/http.cpp
   src/anilist.cpp
   src/sources/sources.cpp
+  src/ui.cpp
 )
 
 target_include_directories(tsuzuki PRIVATE src)
@@ -36,6 +38,7 @@ target_link_libraries(tsuzuki PRIVATE
   CURL::libcurl
   nlohmann_json::nlohmann_json
   pugixml::pugixml
+  httplib::httplib
   anitomy
 )
 

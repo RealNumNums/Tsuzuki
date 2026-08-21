@@ -5,6 +5,7 @@
     "libtorrent",
     "curl",
     "nlohmann-json",
-    "pugixml"
+    "pugixml",
+    "cpp-httplib"
   ]
 }
