@@ -204,6 +204,32 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
     padding:2px 6px;font-size:11.5px;color:var(--cyan);
   }
   .steps a{color:var(--pink-soft)}
+
+  /* ---- library grid ---- */
+  .sect{display:flex;align-items:baseline;gap:10px;margin:22px 0 12px}
+  .sect h3{margin:0;font-size:15px;font-weight:600}
+  .sect span{color:var(--dim);font-size:12.5px}
+  .grid{
+    display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:14px;
+  }
+  .tile{cursor:pointer;transition:transform .1s ease}
+  .tile:hover{transform:translateY(-3px)}
+  .tile .art{
+    position:relative;aspect-ratio:2/3;border-radius:10px;overflow:hidden;
+    background:var(--panel-2) center/cover;border:1px solid var(--line);
+  }
+  .tile:hover .art{border-color:var(--accent)}
+  .tile .next{
+    position:absolute;left:0;right:0;bottom:0;padding:7px 9px;
+    background:linear-gradient(180deg,transparent,rgba(0,0,0,.88));
+    font:600 12px/1.2 "Segoe UI",sans-serif;color:#fff;
+  }
+  .tile .prog{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(0,0,0,.5)}
+  .tile .prog i{display:block;height:100%;background:var(--accent)}
+  .tile .name{
+    margin-top:7px;font-size:12.5px;line-height:1.35;color:var(--ink);
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+  }
   .wiz{padding:0 16px 16px}
   .wiz .step{display:flex;align-items:center;gap:12px;padding:9px 0}
   .wiz .n{
@@ -549,15 +575,46 @@ function goHome(){
 }
 
 async function showHome(){
-  let hist = [];
+  let lists = [], hist = [];
+  try{ lists = await (await fetch('/api/lists')).json(); }catch(e){}
   try{ hist = await (await fetch('/api/history')).json(); }catch(e){}
+  if(!Array.isArray(lists)) lists = [];
 
-  if(!Array.isArray(hist) || !hist.length){
+  const watching = lists.filter(e => e.status === 'CURRENT' || e.status === 'REPEATING');
+  const planning = lists.filter(e => e.status === 'PLANNING');
+  const paused   = lists.filter(e => e.status === 'PAUSED');
+
+  if(!lists.length && (!Array.isArray(hist) || !hist.length)){
     mascot('Search for something to watch.');
     return;
   }
 
-  let html = '<div class="hint">Continue watching</div><div class="eps">';
+  let html = '';
+
+  const section = (title, note, entries) => {
+    if(!entries.length) return '';
+    let h = '<div class="sect"><h3>'+esc(title)+'</h3><span>'+esc(note)+'</span></div><div class="grid">';
+    for(const e of entries){
+      const pct = e.episodes ? Math.round(e.progress / e.episodes * 100) : 0;
+      const art = e.cover ? 'background-image:url('+esc(e.cover)+')' : '';
+      h += '<div class="tile" data-title="'+esc(e.title)+'" data-ep="'+e.nextEpisode+'"'+
+             (e.color ? ' data-color="'+esc(e.color)+'"' : '')+'>'+
+        '<div class="art" style="'+art+'">'+
+          '<div class="next">Episode '+e.nextEpisode+
+            (e.episodes ? ' <span style="opacity:.7">of '+e.episodes+'</span>' : '')+'</div>'+
+          (pct ? '<div class="prog"><i style="width:'+pct+'%"></i></div>' : '')+
+        '</div>'+
+        '<div class="name">'+esc(e.title)+'</div></div>';
+    }
+    return h + '</div>';
+  };
+
+  html += section('Continue watching', 'from your AniList', watching);
+  html += section('On hold', 'paused', paused);
+  html += section('Planning to watch', 'not started', planning);
+
+  if(Array.isArray(hist) && hist.length){
+    html += '<div class="sect"><h3>Recently opened</h3><span>on this machine</span></div><div class="eps">';
   for(const h of hist.slice(0, 12)){
     const ep = h.episode ? 'Episode ' + h.episode : (h.file || '');
     const name = h.show || h.torrent || 'Unknown';
@@ -569,15 +626,27 @@ async function showHome(){
       '<div class="file">'+esc(h.torrent||'')+'</div></div>'+
       '<div class="right"><button>Open</button></div></div>';
   }
-  html += '</div>';
+    html += '</div>';
+  }
+
   out.innerHTML = html;
 
+  // A tile is "find this episode and play it" - the title and the next
+  // unwatched number both come from the list, so nothing has to be typed.
+  document.querySelectorAll('.tile').forEach(t => {
+    t.onclick = () => {
+      if(t.dataset.color) document.documentElement.style.setProperty('--accent', t.dataset.color);
+      $('#q').value = t.dataset.title;
+      $('#ep').value = t.dataset.ep;
+      search();
+    };
+  });
+
   document.querySelectorAll('.ep.hist').forEach(c => {
-    const go = () => {
+    c.onclick = () => {
       lastAnilistId = parseInt(c.dataset.al, 10) || null;
       openTorrent(c.dataset.magnet);
     };
-    c.onclick = go;
   });
 }
 

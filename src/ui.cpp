@@ -1110,6 +1110,22 @@ static void installRoutes(httplib::Server& server, Engine& e) {
         res.set_content("{\"ok\":true}", "application/json");
     });
 
+    server.Get("/api/lists", [](const httplib::Request&, httplib::Response& res) {
+        json out = json::array();
+        for (const auto& e : track::lists()) {
+            out.push_back({{"mediaId", e.mediaId},
+                           {"progress", e.progress},
+                           {"episodes", e.episodes},
+                           {"nextEpisode", e.nextEpisode},
+                           {"status", e.status},
+                           {"title", e.title},
+                           {"cover", e.cover},
+                           {"color", e.color},
+                           {"airing", e.airing}});
+        }
+        res.set_content(out.dump(), "application/json");
+    });
+
     server.Get("/api/history", [](const httplib::Request&, httplib::Response& res) {
         res.set_content(loadHistory().dump(), "application/json");
     });

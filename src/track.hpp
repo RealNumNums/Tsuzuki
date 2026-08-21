@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace tsuzuki::track {
 
@@ -63,6 +64,22 @@ Account account(bool force = false);
 // Sets progress on the user's list, moving the entry to CURRENT. Returns false
 // if not linked, or if AniList rejected it.
 bool updateProgress(int mediaId, int progress);
+
+// An entry on the signed-in user's list.
+struct ListEntry {
+    int mediaId = 0;
+    int progress = 0;      // episodes watched
+    int episodes = 0;      // total, 0 when unknown or airing
+    int nextEpisode = 1;   // progress + 1, clamped
+    std::string status;    // CURRENT / PLANNING / PAUSED / COMPLETED
+    std::string title;
+    std::string cover;
+    std::string color;
+    std::string airing;    // AniList airing status
+};
+
+// The user's lists, newest activity first. Empty when not linked.
+std::vector<ListEntry> lists();
 
 void load();  // read the stored token at startup
 

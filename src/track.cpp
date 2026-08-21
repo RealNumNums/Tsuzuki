@@ -2,9 +2,11 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <mutex>
 
 #include "http.hpp"
@@ -45,23 +47,70 @@ std::string authPath() {
     return dir + "\\auth.json";
 }
 
-void persist() {
-    std::ofstream out(authPath());
-    if (out) out << json{{"anilist", g_token}}.dump(2) << "\n";
+// Writes and reads back. A credential that silently fails to save looks
+// exactly like being signed out on the next launch, which is what happened.
+bool persist() {
+    const std::string path = authPath();
+    const std::string payload = json{{"anilist", g_token}}.dump(2) + "\n";
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        if (!out) return false;
+        out << payload;
+        out.flush();
+        if (!out) return false;
+    }
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    const std::string back((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+    return back == payload;
 }
 
-json query(const std::string& gql, const json& variables, const std::string& tok) {
+// nlohmann value() only substitutes the default when a key is ABSENT. AniList
+// sends keys that are present and null - list group status, for one - and
+// converting null to std::string throws. Everything below tolerates null.
+std::string safeStr(const json& obj, const char* key) {
+    if (!obj.is_object() || !obj.contains(key)) return {};
+    const json& v = obj[key];
+    return v.is_string() ? v.get<std::string>() : std::string();
+}
+
+int safeInt(const json& obj, const char* key, int fallback = 0) {
+    if (!obj.is_object() || !obj.contains(key)) return fallback;
+    const json& v = obj[key];
+    return v.is_number_integer() ? v.get<int>() : fallback;
+}
+
+std::string pick(const json& obj, const char* key) {
+    if (!obj.is_object() || !obj.contains(key) || obj[key].is_null()) return {};
+    return obj[key].is_string() ? obj[key].get<std::string>() : std::string();
+}
+
+struct QueryResult {
+    json data;
+    long status = 0;
+    bool reachedServer = false;
+};
+
+QueryResult queryEx(const std::string& gql, const json& variables, const std::string& tok) {
     json body;
     body["query"] = gql;
     if (!variables.is_null()) body["variables"] = variables;
 
     const auto res = http::postJson(kEndpoint, body.dump(), 20, tok);
-    if (!res.ok) return json();
+
+    QueryResult out;
+    out.status = res.status;
+    out.reachedServer = res.status > 0;
     try {
-        return json::parse(res.body);
+        out.data = json::parse(res.body);
     } catch (const std::exception&) {
-        return json();
     }
+    return out;
+}
+
+json query(const std::string& gql, const json& variables, const std::string& tok) {
+    return queryEx(gql, variables, tok).data;
 }
 
 }  // namespace
@@ -177,7 +226,8 @@ Account account(bool force) {
     }
 
     const std::string tok = token();
-    const json j = query("query { Viewer { id name avatar { medium } } }", json(), tok);
+    const QueryResult r = queryEx("query { Viewer { id name avatar { medium } } }", json(), tok);
+    const json& j = r.data;
 
     Account a;
     if (j.contains("data") && !j["data"].is_null() && !j["data"]["Viewer"].is_null()) {
@@ -188,18 +238,34 @@ Account account(bool force) {
         if (v.contains("avatar") && v["avatar"].is_object()) {
             a.avatar = v["avatar"].value("medium", "");
         }
-    } else {
-        // A token that no longer works is worse than none: it would fail
-        // silently on every sync. Drop it so the UI shows "not linked".
+
         std::lock_guard<std::mutex> lock(g_mutex);
-        g_token.clear();
+        g_account = a;
+        g_accountFetched = true;
+        // Self-heal: if an earlier write failed, a token we have just proved
+        // works is worth another attempt at saving.
         persist();
+        return a;
     }
 
+    // Only forget the credential when AniList has actually rejected it.
+    // Anything else - no network, a timeout, a 500, an unparseable body - is
+    // temporary, and throwing the token away over it silently signs the user
+    // out. That is what kept happening.
+    const bool rejected = r.reachedServer && (r.status == 400 || r.status == 401);
+    if (rejected) {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_token.clear();
+        g_account = Account{};
+        g_accountFetched = true;
+        persist();
+        return Account{};
+    }
+
+    // Keep the token, report the account as still linked from cache if we have
+    // it, and try again next time.
     std::lock_guard<std::mutex> lock(g_mutex);
-    g_account = a;
-    g_accountFetched = true;
-    return a;
+    return g_account.linked ? g_account : Account{};
 }
 
 bool updateProgress(int mediaId, int progress) {
@@ -218,6 +284,81 @@ bool updateProgress(int mediaId, int progress) {
 
     return j.contains("data") && !j["data"].is_null() &&
            !j["data"]["SaveMediaListEntry"].is_null();
+}
+
+std::vector<ListEntry> lists() {
+    std::vector<ListEntry> out;
+    const Account a = account();
+    if (!a.linked) return out;
+
+    // Shape taken from hayase-app/interface queries.ts: no status filter, sort
+    // by recent activity, and let the caller decide what to show. Passing
+    // status_in here is what made AniList return an error instead of data.
+    const json vars{{"id", a.id}};
+    const json j = query(
+        "query ($id: Int) {"
+        "  MediaListCollection(userId: $id, type: ANIME,"
+        "                      forceSingleCompletedList: true,"
+        "                      sort: UPDATED_TIME_DESC) {"
+        "    lists { status entries { progress media {"
+        "      id episodes status title { romaji english }"
+        "      coverImage { large color } } } }"
+        "  }"
+        "}",
+        vars, token());
+
+    // Defensive throughout: AniList answers errors with a completely different
+    // shape, and indexing a const json at a missing key throws.
+    if (!j.is_object() || !j.contains("data") || !j["data"].is_object()) return out;
+    const json& data = j["data"];
+    if (!data.contains("MediaListCollection") || !data["MediaListCollection"].is_object()) {
+        return out;
+    }
+
+    for (const auto& list : data["MediaListCollection"].value("lists", json::array())) {
+        if (!list.is_object()) continue;
+        const std::string status = safeStr(list, "status");
+        for (const auto& e : list.value("entries", json::array())) {
+            if (!e.is_object()) continue;
+            const json m = e.value("media", json::object());
+            if (!m.is_object()) continue;
+
+            ListEntry le;
+            le.mediaId = safeInt(m, "id");
+            le.progress = safeInt(e, "progress");
+            le.episodes = safeInt(m, "episodes");
+            le.status = status;
+            le.airing = safeStr(m, "status");
+
+            const json t = m.value("title", json::object());
+            le.title = pick(t, "romaji");
+            if (le.title.empty()) le.title = pick(t, "english");
+
+            const json ci = m.value("coverImage", json::object());
+            le.cover = pick(ci, "large");
+            le.color = pick(ci, "color");
+
+            // Next unwatched episode, never past the end of a finished show.
+            le.nextEpisode = le.progress + 1;
+            if (le.episodes > 0 && le.nextEpisode > le.episodes) le.nextEpisode = le.episodes;
+
+            if (!le.mediaId) continue;
+
+            // The same show comes back once per list it belongs to, including
+            // unnamed custom lists with a null status. Keep one, preferring
+            // the copy that actually says what it is.
+            auto existing = std::find_if(out.begin(), out.end(),
+                                         [&](const ListEntry& x) {
+                                             return x.mediaId == le.mediaId;
+                                         });
+            if (existing != out.end()) {
+                if (existing->status.empty() && !le.status.empty()) existing->status = le.status;
+                continue;
+            }
+            out.push_back(std::move(le));
+        }
+    }
+    return out;
 }
 
 }  // namespace tsuzuki::track
