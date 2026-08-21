@@ -26,11 +26,41 @@
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "anilist.hpp"
 #include "scan.hpp"
 #include "sources/source.hpp"
 
 namespace {
+
+// True when we own the console window - i.e. the exe was double-clicked from
+// Explorer rather than run from an existing terminal. Windows destroys that
+// console the moment the process exits, which is why double-clicking a CLI
+// tool looks like "nothing happened".
+bool ownsConsole() {
+#ifdef _WIN32
+    DWORD pids[4] = {};
+    const DWORD n = GetConsoleProcessList(pids, 4);
+    return n <= 1;
+#else
+    return false;
+#endif
+}
+
+// Keeps that console open long enough to read, on every exit path.
+struct PauseOnExit {
+    bool active = false;
+    ~PauseOnExit() {
+        if (!active) return;
+        std::cout << "\nPress Enter to close..." << std::flush;
+        std::cin.clear();
+        std::string discard;
+        std::getline(std::cin, discard);
+    }
+};
 
 struct Args {
     std::string mode = "play";  // "play" | "search"
@@ -283,8 +313,48 @@ void cleanUp(lt::session& session, lt::torrent_handle& handle, const std::string
 
 }  // namespace
 
+// Double-clicked with no arguments: ask for what we need rather than printing
+// a usage line into a window that is about to disappear.
+std::optional<Args> promptForArgs() {
+    Args a;
+    a.mode = "search";
+
+    std::cout << "\n  Tsuzuki - anime torrent streaming\n"
+                 "  ---------------------------------\n\n"
+                 "  Downloads are deleted after you finish watching.\n"
+                 "  Needs mpv installed.\n\n";
+
+    std::cout << "  Anime title (blank to quit): " << std::flush;
+    std::string title;
+    if (!std::getline(std::cin, title) || title.empty()) return std::nullopt;
+    a.uri = title;
+
+    std::cout << "  Episode number (blank = choose from a list): " << std::flush;
+    std::string ep;
+    std::getline(std::cin, ep);
+    if (!ep.empty()) {
+        const int n = std::atoi(ep.c_str());
+        if (n > 0) a.episode = n;
+    }
+
+    if (const char* tmp = std::getenv("TEMP")) {
+        a.savePath = std::string(tmp) + "\\tsuzuki";
+    }
+    std::cout << "\n";
+    return a;
+}
+
 int main(int argc, char** argv) {
-    auto args = parseArgs(argc, argv);
+    PauseOnExit keepOpen{ownsConsole()};
+
+    std::optional<Args> args;
+    if (argc <= 1 && keepOpen.active) {
+        args = promptForArgs();
+        if (!args) return 0;
+    } else {
+        args = parseArgs(argc, argv);
+    }
+
     if (!args) {
         usage();
         return 1;
