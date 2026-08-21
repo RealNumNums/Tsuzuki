@@ -136,6 +136,56 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
   }
   @keyframes spin{to{transform:rotate(360deg)}}
 
+  /* ---- themes ---- */
+  html[data-theme="blackout"]{
+    --bg:#000; --panel:#0b0b0b; --panel-2:#141414; --line:#242424;
+    --ink:#f2f2f2; --dim:#8a8a8a; --pink:#ffffff; --pink-soft:#dcdcdc; --cyan:#bdbdbd;
+  }
+  html[data-theme="blackout"] button{color:#111}
+  html[data-theme="whiteout"]{
+    --bg:#f4f4f7; --panel:#ffffff; --panel-2:#ececf2; --line:#d6d6e0;
+    --ink:#16161c; --dim:#61616e; --pink:#2b2b31; --pink-soft:#4a4a55;
+    --cyan:#3a6ea5; --gold:#9a7400; --ok:#2f7d20;
+  }
+  html[data-theme="whiteout"] body{background:var(--bg)}
+  html[data-theme="whiteout"] button{color:#fff}
+  html[data-theme="catppuccin"]{
+    --bg:#1e1e2e; --panel:#242438; --panel-2:#2d2d44; --line:#3b3b55;
+    --ink:#cdd6f4; --dim:#9399b2; --pink:#f5c2e7; --pink-soft:#f9d3ee;
+    --cyan:#94e2d5; --gold:#f9e2af; --ok:#a6e3a1;
+  }
+  html[data-theme="catppuccin"] button{color:#2b2033}
+  html[data-theme="dracula"]{
+    --bg:#282a36; --panel:#31333f; --panel-2:#3b3d4d; --line:#4a4c60;
+    --ink:#f8f8f2; --dim:#9aa0b8; --pink:#bd93f9; --pink-soft:#d5b8ff;
+    --cyan:#8be9fd; --gold:#f1fa8c; --ok:#50fa7b;
+  }
+  html[data-theme="dracula"] button{color:#241b33}
+  html[data-theme="amber"]{
+    --bg:#100d07; --panel:#191307; --panel-2:#241b0c; --line:#3a2c12;
+    --ink:#f5ecd9; --dim:#a89778; --pink:#ffb020; --pink-soft:#ffc85c;
+    --cyan:#ffd98a; --gold:#ffb020; --ok:#9bd44f;
+  }
+  html[data-theme="amber"] button{color:#2b1c00}
+  html[data-theme="lavender"]{
+    --bg:#15101f; --panel:#1e1730; --panel-2:#2a2142; --line:#3b2f5a;
+    --ink:#ece6fa; --dim:#a297c4; --pink:#b794f6; --pink-soft:#d0b6ff;
+    --cyan:#8fd8ff; --gold:#ffd66b; --ok:#7fe08a;
+  }
+  html[data-theme="lavender"] button{color:#241a38}
+
+  /* ---- theme picker ---- */
+  .themes{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:10px;padding:14px 16px}
+  .theme{
+    border:1px solid var(--line);border-radius:10px;padding:12px;cursor:pointer;
+    transition:border-color .15s ease,transform .08s ease;
+  }
+  .theme:hover{transform:translateY(-1px)}
+  .theme.sel{border-color:var(--accent);box-shadow:0 0 0 2px rgba(255,92,141,.18)}
+  .theme b{display:block;font-size:13px;margin-bottom:8px}
+  .sw{display:flex;gap:5px}
+  .sw i{width:22px;height:22px;border-radius:6px;display:block}
+
   /* ---- player control strip ---- */
   #playerbar{display:none}
   body.player{background:#0b0a12;min-height:0}
@@ -249,6 +299,16 @@ const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':
 const size = b => { if(!b) return '-'; const u=['B','K','M','G','T']; let i=0,v=b; while(v>=1024&&i<4){v/=1024;i++;} return v.toFixed(v<10&&i>0?1:0)+u[i]; };
 
 let lastResults = null, lastAnilistId = null;
+let prefs = {};
+
+// Pull preferences once so the theme is applied before anything renders.
+(async () => {
+  try{
+    prefs = await (await fetch('/api/settings')).json();
+    applyTheme(prefs.theme);
+    if(prefs.quality && $('#res')) $('#res').value = prefs.quality;
+  }catch(e){}
+})();
 
 function busy(msg){ out.innerHTML = '<div class="empty"><span class="spinner"></span><span id="busytext">'+esc(msg)+'</span></div>'; }
 function mascot(msg){ out.innerHTML = '<div class="empty">'+MASCOT+'<p>'+esc(msg)+'</p></div>'; }
@@ -283,6 +343,11 @@ function chipsFor(name){
   if(!j.results || !j.results.length) return mascot('Nothing found for "'+q+'".');
 
   lastResults = j; lastAnilistId = j.anilist ? j.anilist.id : null;
+  if(j.autoSelect && j.results.length){
+    // Straight into the top result. The episode table still appears, so this
+    // skips a click without skipping the part where you see what you got.
+    return openTorrent(j.results[0].magnet);
+  }
   renderResults();
 }
 
@@ -426,6 +491,7 @@ $('#q').addEventListener('keydown', e => { if(e.key==='Enter') search(); });
 /* ------------------------------------------------------- home + history */
 
 function goHome(){
+  document.documentElement.style.removeProperty('--accent');
   lastResults = null;
   showHome();
 }
@@ -596,13 +662,44 @@ const SETTING_ROWS = [
   ['bufferSeconds','number','Extra buffer (seconds)','0 lets Tsuzuki size the buffer from measured speed.'],
   ['deleteAfter','toggle','Delete after watching','Remove each episode once you finish it.'],
   ['subsOn','toggle','Subtitles on by default','Applies when a subtitle track exists.'],
+  ['titleLanguage','select','Title language','How show titles are displayed.','romaji=Romaji|english=English|native=Native'],
+  ['lookupPreference','select','Lookup preference','What to rank results by. Curated picks stay first either way.','quality=Quality|size=Smallest size|availability=Most seeders'],
+  ['autoSelect','toggle','Auto-select torrents','Open the top result straight away instead of showing the list.'],
+  ['streamedDownload','toggle','Streamed download','Only fetch what playback needs. Gentler on the swarm, stalls more easily.'],
+  ['torrentPort','number','Forwarded torrent port','0 picks one automatically. Set this if you forwarded a port manually.'],
+  ['dhtPort','number','DHT port','0 is automatic.'],
+  ['disableDHT','toggle','Disable DHT and LSD','For private trackers. Greatly reduces peer discovery.'],
+  ['disablePeX','toggle','Disable peer exchange','For private trackers. Greatly reduces peer discovery.'],
 ];
+
+const THEMES = [
+  ['tsuzuki','Tsuzuki','#0e0d17','#ff5c8d','#5be9e9'],
+  ['blackout','Blackout','#000000','#ffffff','#bdbdbd'],
+  ['whiteout','Whiteout','#f4f4f7','#2b2b31','#3a6ea5'],
+  ['catppuccin','Catppuccin','#1e1e2e','#f5c2e7','#94e2d5'],
+  ['dracula','Dracula','#282a36','#bd93f9','#8be9fd'],
+  ['amber','Amber','#100d07','#ffb020','#ffd98a'],
+  ['lavender','Lavender','#15101f','#b794f6','#8fd8ff'],
+];
+
+function applyTheme(name){
+  if(name && name !== 'tsuzuki') document.documentElement.dataset.theme = name;
+  else delete document.documentElement.dataset.theme;
+}
 
 async function showSettings(){
   let cfg = {};
   try{ cfg = await (await fetch('/api/settings')).json(); }catch(e){}
   let html = '<button class="back" id="sBack">&larr; Back</button>' +
-             '<div class="panel"><h3>Settings</h3>';
+             '<div class="panel"><h3>Appearance</h3><div class="themes">';
+  for(const [id,label,bg,accent,second] of THEMES){
+    const sel = (cfg.theme||'tsuzuki') === id ? ' sel' : '';
+    html += '<div class="theme'+sel+'" data-theme-id="'+id+'" style="background:'+bg+'">'+
+      '<b style="color:'+(id==='whiteout'?'#16161c':'#fff')+'">'+esc(label)+'</b>'+
+      '<div class="sw"><i style="background:'+accent+'"></i><i style="background:'+second+'"></i>'+
+      '<i style="background:'+bg+';border:1px solid rgba(128,128,128,.4)"></i></div></div>';
+  }
+  html += '</div></div><div class="panel"><h3>Settings</h3>';
   for(const [key,type,label,desc,opts] of SETTING_ROWS){
     let control;
     if(type === 'toggle'){
@@ -640,6 +737,16 @@ async function showSettings(){
     $('#sSaved').textContent = 'Saved.';
     setTimeout(() => { if($('#sSaved')) $('#sSaved').textContent = ''; }, 1600);
   };
+  document.querySelectorAll('.theme[data-theme-id]').forEach(el =>
+    el.onclick = async () => {
+      const id = el.dataset.themeId;
+      applyTheme(id);
+      document.querySelectorAll('.theme').forEach(x => x.classList.remove('sel'));
+      el.classList.add('sel');
+      await fetch('/api/settings', {method:'POST',headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({theme: id})});
+    });
+
   document.querySelectorAll('.toggle[data-k]').forEach(t =>
     t.onclick = () => { t.classList.toggle('on'); save(); });
   document.querySelectorAll('input[data-k],select[data-k]').forEach(el =>

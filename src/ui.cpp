@@ -20,6 +20,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -107,6 +108,21 @@ struct Settings {
     double bufferSeconds = 0;   // 0 = size it from measured throughput
     bool deleteAfter = true;
     bool subsOn = true;
+
+    // Interface
+    std::string theme = "tsuzuki";
+    std::string titleLanguage = "romaji";   // romaji | english | native
+
+    // Lookup
+    std::string lookupPreference = "quality";  // quality | size | availability
+    bool autoSelect = false;
+
+    // Torrent client
+    bool streamedDownload = false;  // only fetch what playback needs
+    int torrentPort = 0;            // 0 = pick one
+    int dhtPort = 0;
+    bool disableDHT = false;
+    bool disablePeX = false;
 };
 
 Settings g_settings;
@@ -129,7 +145,16 @@ json settingsToJson(const Settings& s) {
                 {"subLang", s.subLang},
                 {"bufferSeconds", s.bufferSeconds},
                 {"deleteAfter", s.deleteAfter},
-                {"subsOn", s.subsOn}};
+                {"subsOn", s.subsOn},
+                {"theme", s.theme},
+                {"titleLanguage", s.titleLanguage},
+                {"lookupPreference", s.lookupPreference},
+                {"autoSelect", s.autoSelect},
+                {"streamedDownload", s.streamedDownload},
+                {"torrentPort", s.torrentPort},
+                {"dhtPort", s.dhtPort},
+                {"disableDHT", s.disableDHT},
+                {"disablePeX", s.disablePeX}};
 }
 
 void settingsFromJson(const json& j, Settings& s) {
@@ -142,6 +167,15 @@ void settingsFromJson(const json& j, Settings& s) {
     if (j.contains("bufferSeconds") && j["bufferSeconds"].is_number()) s.bufferSeconds = j["bufferSeconds"];
     if (j.contains("deleteAfter") && j["deleteAfter"].is_boolean()) s.deleteAfter = j["deleteAfter"];
     if (j.contains("subsOn") && j["subsOn"].is_boolean()) s.subsOn = j["subsOn"];
+    if (j.contains("theme") && j["theme"].is_string()) s.theme = j["theme"];
+    if (j.contains("titleLanguage") && j["titleLanguage"].is_string()) s.titleLanguage = j["titleLanguage"];
+    if (j.contains("lookupPreference") && j["lookupPreference"].is_string()) s.lookupPreference = j["lookupPreference"];
+    if (j.contains("autoSelect") && j["autoSelect"].is_boolean()) s.autoSelect = j["autoSelect"];
+    if (j.contains("streamedDownload") && j["streamedDownload"].is_boolean()) s.streamedDownload = j["streamedDownload"];
+    if (j.contains("torrentPort") && j["torrentPort"].is_number()) s.torrentPort = j["torrentPort"];
+    if (j.contains("dhtPort") && j["dhtPort"].is_number()) s.dhtPort = j["dhtPort"];
+    if (j.contains("disableDHT") && j["disableDHT"].is_boolean()) s.disableDHT = j["disableDHT"];
+    if (j.contains("disablePeX") && j["disablePeX"].is_boolean()) s.disablePeX = j["disablePeX"];
 }
 
 void loadSettings() {
@@ -224,6 +258,22 @@ void applySessionSettings(Engine& e, const Settings& cfg) {
     sp.set_int(lt::settings_pack::upload_rate_limit, bytes);
     sp.set_int(lt::settings_pack::connections_limit,
                cfg.maxConnections > 0 ? cfg.maxConnections : 200);
+
+    // Private trackers want these off; they also cut peer discovery hard,
+    // which is why they are opt-in rather than defaults.
+    sp.set_bool(lt::settings_pack::enable_dht, !cfg.disableDHT);
+    sp.set_bool(lt::settings_pack::enable_lsd, !cfg.disableDHT);
+
+    if (cfg.torrentPort > 0) {
+        sp.set_str(lt::settings_pack::listen_interfaces,
+                   "0.0.0.0:" + std::to_string(cfg.torrentPort) + ",[::]:" +
+                       std::to_string(cfg.torrentPort));
+    }
+    if (cfg.dhtPort > 0) {
+        sp.set_str(lt::settings_pack::dht_bootstrap_nodes,
+                   "dht.libtorrent.org:25401,router.bittorrent.com:6881,"
+                   "router.utorrent.com:6881,dht.transmissionbt.com:6881");
+    }
     e.session.apply_settings(sp);
 }
 
@@ -265,6 +315,7 @@ bool openTorrent(Engine& e, const std::string& magnet, std::string& err) {
     }
     atp.save_path = e.savePath;
     atp.flags |= lt::torrent_flags::upload_mode;
+    if (currentSettings().disablePeX) atp.flags |= lt::torrent_flags::disable_pex;
 
     // Leaving a torrent takes its remaining data with it - downloads are
     // disposable, so nothing should survive switching releases.
@@ -406,7 +457,11 @@ void playFile(Engine& e, int index) {
     const Settings cfg = currentSettings();
 
     double bufferSeconds = 8.0;
-    if (cfg.bufferSeconds > 0) {
+    if (cfg.streamedDownload) {
+        // Fetch only what playback is about to need. Gentler on the swarm and
+        // on disk, at the cost of stalling if the connection dips.
+        bufferSeconds = 6.0;
+    } else if (cfg.bufferSeconds > 0) {
         // Explicit override from settings wins over the measurement.
         bufferSeconds = cfg.bufferSeconds;
     } else if (rate < bitrate) {
@@ -474,6 +529,19 @@ void playFile(Engine& e, int index) {
     }
 
     e.videoActive = true;
+    // Belt and braces: if the file is missing or empty, say so rather than
+    // launching a player onto nothing and looking like a glitch.
+    {
+        std::error_code ec;
+        const auto onDisk = std::filesystem::file_size(path, ec);
+        if (ec || onDisk == 0) {
+            e.setMessage("That episode is no longer on disk. Pick it again to re-download.");
+            e.done = true;
+            e.playing = false;
+            return;
+        }
+    }
+
     if (g_playbackHook) g_playbackHook(true);
 
     // CreateProcess rather than system(): we need to stay alive alongside mpv
@@ -569,6 +637,25 @@ void playFile(Engine& e, int index) {
         return;
     }
 
+    if (removed) {
+        // Deleting behind libtorrent's back leaves its piece bitfield claiming
+        // the data is still present, so replaying the episode skipped
+        // buffering entirely and handed mpv a file that no longer existed.
+        // A recheck is cheap here precisely because almost nothing is on disk.
+        e.setMessage("Episode removed - refreshing torrent state...");
+        e.handle.force_recheck();
+
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (std::chrono::steady_clock::now() < deadline) {
+            const lt::torrent_status st = e.handle.status();
+            if (st.state != lt::torrent_status::checking_files &&
+                st.state != lt::torrent_status::checking_resume_data) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+    }
+
     e.setMessage(removed ? "Episode removed. Pick another one."
                          : "Finished, but that file could not be deleted yet - "
                            "it will go when you close Tsuzuki.");
@@ -644,7 +731,27 @@ static void installRoutes(httplib::Server& server, Engine& e) {
             sources::makeSeaDex(), sources::makeAnimeTosho(), sources::makeNyaa(),
             sources::makeSubsPlease(),
         };
-        const auto results = sources::searchAll(all, query);
+        auto results = sources::searchAll(all, query);
+
+        // Lookup preference re-orders what searchAll produced. Curated picks
+        // stay first regardless - that is the one signal worth more than any
+        // of these heuristics.
+        const Settings cfg = currentSettings();
+        if (cfg.lookupPreference == "size") {
+            std::stable_sort(results.begin(), results.end(),
+                             [](const sources::Result& a, const sources::Result& b) {
+                                 if (a.curatedBest != b.curatedBest) return a.curatedBest;
+                                 if (a.size == 0 || b.size == 0) return a.size > b.size;
+                                 return a.size < b.size;
+                             });
+        } else if (cfg.lookupPreference == "availability") {
+            std::stable_sort(results.begin(), results.end(),
+                             [](const sources::Result& a, const sources::Result& b) {
+                                 if (a.curatedBest != b.curatedBest) return a.curatedBest;
+                                 return a.seeders > b.seeders;
+                             });
+        }
+        reply["autoSelect"] = cfg.autoSelect;
 
         reply["results"] = json::array();
         int n = 0;
