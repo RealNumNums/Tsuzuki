@@ -38,12 +38,19 @@ std::string resolveClientId(const std::string& fromSettings);
 std::string resolveClientSecret(const std::string& fromSettings);
 
 // URL to open in a browser to start linking. Empty if no client id is available.
-std::string authorizeUrl(const std::string& clientId, int port);
+std::string authorizeUrl(const std::string& clientId, const std::string& redirect);
+
+// Implicit grant, deliberately without redirect_uri. AniList then redirects to
+// whatever the client is registered with, and the host window intercepts that
+// navigation to read the token out of the fragment - so the registered URL
+// never has to be reachable, or even correct.
+std::string implicitAuthorizeUrl(const std::string& clientId);
 
 // Swaps the ?code= AniList sends back for an access token. Returns false with
 // `error` set on failure.
 bool exchangeCode(const std::string& code, const std::string& clientId,
-                  const std::string& clientSecret, int port, std::string& error);
+                  const std::string& clientSecret, const std::string& redirect,
+                  std::string& error);
 
 void setToken(const std::string& token);
 std::string token();

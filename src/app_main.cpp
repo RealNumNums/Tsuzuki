@@ -30,8 +30,16 @@ namespace {
 constexpr int kPort = 7654;
 constexpr wchar_t kClassName[] = L"TsuzukiAppWindow";
 
+ComPtr<ICoreWebView2Environment> g_env;
 ComPtr<ICoreWebView2Controller> g_controller;
 ComPtr<ICoreWebView2> g_webview;
+
+// The AniList login window and its view, kept alive while linking.
+HWND g_authWnd = nullptr;
+ComPtr<ICoreWebView2Controller> g_authController;
+ComPtr<ICoreWebView2> g_authView;
+constexpr UINT WM_START_AUTH = WM_APP + 2;
+std::wstring g_authUrl;
 
 // Child window mpv draws into. Hidden until something plays, so the interface
 // owns the whole client area the rest of the time.
@@ -100,6 +108,9 @@ void useDarkTitleBar(HWND hwnd) {
                           sizeof(dark));
 }
 
+void openAuthWindow(HINSTANCE instance, HWND owner);
+void closeAuthWindow();
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_SIZE:
@@ -112,6 +123,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (playing) SetFocus(g_video);
             return 0;
         }
+
+        case WM_START_AUTH:
+            openAuthWindow(reinterpret_cast<HINSTANCE>(
+                               GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)),
+                           hwnd);
+            return 0;
+
+        case WM_APP + 3:  // token captured
+            closeAuthWindow();
+            return 0;
 
         case WM_GETMINMAXINFO: {
             auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
@@ -129,6 +150,118 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         default:
             return DefWindowProcW(hwnd, msg, wp, lp);
     }
+}
+
+// Pull "access_token=..." out of a URL fragment.
+std::wstring tokenFromUrl(const std::wstring& url) {
+    const auto at = url.find(L"access_token=");
+    if (at == std::wstring::npos) return {};
+    std::wstring rest = url.substr(at + 13);
+    const auto end = rest.find_first_of(L"&#");
+    if (end != std::wstring::npos) rest = rest.substr(0, end);
+    return rest;
+}
+
+void closeAuthWindow() {
+    g_authView.Reset();
+    g_authController.Reset();
+    if (g_authWnd) {
+        DestroyWindow(g_authWnd);
+        g_authWnd = nullptr;
+    }
+}
+
+// Opens AniList in a window we own and watches where it navigates. AniList
+// sends the token back in the fragment of the redirect; because we see the
+// navigation before it happens, the redirect target never has to load, be
+// reachable, or even be correct.
+void openAuthWindow(HINSTANCE instance, HWND owner) {
+    if (!g_env) return;
+    if (g_authWnd) {
+        SetForegroundWindow(g_authWnd);
+        return;
+    }
+
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW ac{};
+        ac.cbSize = sizeof(ac);
+        ac.lpfnWndProc = [](HWND h, UINT m, WPARAM w, LPARAM l) -> LRESULT {
+            if (m == WM_SIZE && g_authController) {
+                RECT b{};
+                GetClientRect(h, &b);
+                g_authController->put_Bounds(b);
+                return 0;
+            }
+            if (m == WM_DESTROY) {
+                g_authWnd = nullptr;
+                return 0;
+            }
+            return DefWindowProcW(h, m, w, l);
+        };
+        ac.hInstance = instance;
+        ac.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        ac.hbrBackground = CreateSolidBrush(RGB(0x0b, 0x16, 0x22));
+        ac.lpszClassName = L"TsuzukiAuthWindow";
+        ac.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(101));
+        RegisterClassExW(&ac);
+        registered = true;
+    }
+
+    g_authWnd = CreateWindowExW(0, L"TsuzukiAuthWindow", L"Sign in to AniList",
+                                WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT,
+                                CW_USEDEFAULT, 520, 720, owner, nullptr, instance, nullptr);
+    if (!g_authWnd) return;
+    useDarkTitleBar(g_authWnd);
+    ShowWindow(g_authWnd, SW_SHOW);
+
+    g_env->CreateCoreWebView2Controller(
+        g_authWnd,
+        Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+            [](HRESULT r, ICoreWebView2Controller* controller) -> HRESULT {
+                if (FAILED(r) || !controller || !g_authWnd) return r;
+                g_authController = controller;
+                g_authController->get_CoreWebView2(&g_authView);
+
+                RECT b{};
+                GetClientRect(g_authWnd, &b);
+                g_authController->put_Bounds(b);
+
+                EventRegistrationToken token;
+                g_authView->add_NavigationStarting(
+                    Callback<ICoreWebView2NavigationStartingEventHandler>(
+                        [](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args)
+                            -> HRESULT {
+                            LPWSTR uri = nullptr;
+                            if (FAILED(args->get_Uri(&uri)) || !uri) return S_OK;
+                            const std::wstring url(uri);
+                            CoTaskMemFree(uri);
+
+                            const std::wstring tok = tokenFromUrl(url);
+                            if (tok.empty()) return S_OK;
+
+                            // Stop before the redirect target loads - it may be
+                            // anything at all, and we already have what we came for.
+                            args->put_Cancel(TRUE);
+
+                            const int n = WideCharToMultiByte(CP_UTF8, 0, tok.c_str(), -1,
+                                                              nullptr, 0, nullptr, nullptr);
+                            std::string narrow(n > 0 ? n - 1 : 0, '\0');
+                            if (n > 0) {
+                                WideCharToMultiByte(CP_UTF8, 0, tok.c_str(), -1, narrow.data(),
+                                                    n, nullptr, nullptr);
+                            }
+                            tsuzuki::ui::acceptToken(narrow);
+                            if (g_main) PostMessageW(g_main, WM_APP + 3, 0, 0);
+                            return S_OK;
+                        })
+                        .Get(),
+                    &token);
+
+                g_authView->Navigate(g_authUrl.c_str());
+                return S_OK;
+            })
+            .Get());
 }
 
 void fatal(HWND owner, const wchar_t* text) {
@@ -181,6 +314,12 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int showCmd) {
     g_video = CreateWindowExW(0, L"TsuzukiVideo", nullptr, WS_CHILD | WS_CLIPCHILDREN,
                               0, 0, 0, 0, hwnd, nullptr, instance, nullptr);
     tsuzuki::ui::setVideoHost(g_video, onPlaybackActive);
+    tsuzuki::ui::setAuthHook([](const char* url) {
+        const int n = MultiByteToWideChar(CP_UTF8, 0, url, -1, nullptr, 0);
+        g_authUrl.assign(n > 0 ? n - 1 : 0, L'\0');
+        if (n > 0) MultiByteToWideChar(CP_UTF8, 0, url, -1, g_authUrl.data(), n);
+        if (g_main) PostMessageW(g_main, WM_START_AUTH, 0, 0);
+    });
 
     useDarkTitleBar(hwnd);
     ShowWindow(hwnd, showCmd);
@@ -197,6 +336,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int showCmd) {
                     PostQuitMessage(1);
                     return result;
                 }
+                g_env = env;
                 env->CreateCoreWebView2Controller(
                     hwnd,
                     Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(

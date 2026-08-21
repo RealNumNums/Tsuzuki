@@ -888,7 +888,27 @@ function applyTheme(name){
     let r = {};
     try{ r = await (await fetch('/api/account/login',{method:'POST'})).json(); }catch(e){}
     if(!r.ok){ showErr(r.error || 'Could not start linking.'); return; }
-    showErr('Approve Tsuzuki in the browser tab that opened, then come back here.');
+    showErr('Approve Tsuzuki in the browser tab that opened.');
+    // If the redirect points somewhere we cannot listen on, the code never
+    // reaches us - so offer a way to hand it over rather than polling to a
+    // timeout and blaming the user's configuration.
+    const box = $('#aErr');
+    if(box && !$('#wPaste')){
+      const row = document.createElement('div');
+      row.className = 'copyrow';
+      row.style.margin = '8px 0 0';
+      row.innerHTML = '<input id="wPaste" placeholder="Landed on a page that is not Tsuzuki? Paste that URL here" autocomplete="off">'+
+                      '<button class="small" id="wPasteGo">Finish</button>';
+      box.appendChild(row);
+      $('#wPasteGo').onclick = async () => {
+        const v = ($('#wPaste').value || '').trim();
+        if(!v){ $('#wPaste').focus(); return; }
+        const r = await (await fetch('/api/account/code', {method:'POST',
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify({code: v})})).json();
+        if(r.ok) showSettings();
+        else showErr(r.error || 'That code was not accepted.');
+      };
+    }
     let tries = 0;
     const timer = setInterval(async () => {
       let a = {};

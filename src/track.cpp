@@ -77,19 +77,19 @@ std::string resolveClientSecret(const std::string& fromSettings) {
     return fromSettings.empty() ? defaultClientSecret() : fromSettings;
 }
 
-std::string redirectUri(int port) {
-    return "http://127.0.0.1:" + std::to_string(port) + "/auth/anilist";
-}
-
-std::string authorizeUrl(const std::string& clientId, int port) {
+// Whatever redirect the AniList client is actually registered with. It does
+// not have to be our loopback - it only has to match, and the code can be
+// handed back by hand when it is somewhere we cannot listen on.
+std::string authorizeUrl(const std::string& clientId, const std::string& redirect) {
     if (clientId.empty()) return {};
     return "https://anilist.co/api/v2/oauth/authorize?client_id=" +
            http::urlEncode(clientId) + "&response_type=code&redirect_uri=" +
-           http::urlEncode(redirectUri(port));
+           http::urlEncode(redirect);
 }
 
 bool exchangeCode(const std::string& code, const std::string& clientId,
-                  const std::string& clientSecret, int port, std::string& error) {
+                  const std::string& clientSecret, const std::string& redirect,
+                  std::string& error) {
     if (code.empty()) {
         error = "AniList did not return an authorization code.";
         return false;
@@ -102,7 +102,7 @@ bool exchangeCode(const std::string& code, const std::string& clientId,
     const json body{{"grant_type", "authorization_code"},
                     {"client_id", clientId},
                     {"client_secret", clientSecret},
-                    {"redirect_uri", redirectUri(port)},
+                    {"redirect_uri", redirect},
                     {"code", code}};
 
     const auto res = http::postJson(kTokenEndpoint, body.dump());
@@ -124,6 +124,12 @@ bool exchangeCode(const std::string& code, const std::string& clientId,
     // often a redirect URL that does not match the registered one.
     error = j.value("hint", j.value("message", j.value("error", "AniList rejected the login.")));
     return false;
+}
+
+std::string implicitAuthorizeUrl(const std::string& clientId) {
+    if (clientId.empty()) return {};
+    return "https://anilist.co/api/v2/oauth/authorize?client_id=" +
+           http::urlEncode(clientId) + "&response_type=token";
 }
 
 void setToken(const std::string& tok) {

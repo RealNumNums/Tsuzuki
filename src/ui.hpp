@@ -21,6 +21,15 @@ void setVideoHost(void* hwnd, PlaybackHook hook);
 // Removes the open torrent and its data. Call before the process exits -
 // downloads are disposable, and leaving them behind is precisely the leak this
 // project exists to avoid. Safe to call when nothing is open.
+// Native app only. When set, linking opens a window the app controls instead
+// of handing the user off to their browser, which is what lets the token be
+// read straight out of the redirect.
+using AuthHook = void (*)(const char* url);
+void setAuthHook(AuthHook hook);
+
+// Called by that window once it has the token.
+void acceptToken(const std::string& token);
+
 void shutdown();
 
 }  // namespace tsuzuki::ui

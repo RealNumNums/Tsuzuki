@@ -130,6 +130,10 @@ struct Settings {
     // Accounts
     std::string anilistClientId;
     std::string anilistClientSecret;
+    // Must match what the AniList client is registered with. Defaults to our
+    // own loopback, but can be anything - including a page we do not control,
+    // in which case the code is handed back manually.
+    std::string anilistRedirect = "http://127.0.0.1:7654/auth/anilist";
     bool syncProgress = true;
 
     // Interface extras
@@ -175,6 +179,7 @@ json settingsToJson(const Settings& s) {
                 {"disablePeX", s.disablePeX},
                 {"anilistClientId", s.anilistClientId},
                 {"anilistClientSecret", s.anilistClientSecret},
+                {"anilistRedirect", s.anilistRedirect},
                 {"syncProgress", s.syncProgress},
                 {"uiScale", s.uiScale},
                 {"hideSpoilers", s.hideSpoilers},
@@ -205,6 +210,10 @@ void settingsFromJson(const json& j, Settings& s) {
     if (j.contains("disablePeX") && j["disablePeX"].is_boolean()) s.disablePeX = j["disablePeX"];
     if (j.contains("anilistClientId") && j["anilistClientId"].is_string()) s.anilistClientId = j["anilistClientId"];
     if (j.contains("anilistClientSecret") && j["anilistClientSecret"].is_string()) s.anilistClientSecret = j["anilistClientSecret"];
+    if (j.contains("anilistRedirect") && j["anilistRedirect"].is_string() &&
+        !j["anilistRedirect"].get<std::string>().empty()) {
+        s.anilistRedirect = j["anilistRedirect"];
+    }
     if (j.contains("syncProgress") && j["syncProgress"].is_boolean()) s.syncProgress = j["syncProgress"];
     if (j.contains("uiScale") && j["uiScale"].is_number()) s.uiScale = j["uiScale"];
     if (j.contains("hideSpoilers") && j["hideSpoilers"].is_boolean()) s.hideSpoilers = j["hideSpoilers"];
@@ -769,6 +778,14 @@ void shutdown() {
     }
 }
 
+AuthHook g_authHook = nullptr;
+
+void setAuthHook(AuthHook hook) { g_authHook = hook; }
+
+void acceptToken(const std::string& token) {
+    if (!token.empty()) track::setToken(token);
+}
+
 void setVideoHost(void* hwnd, PlaybackHook hook) {
     g_videoHost = hwnd;
     g_playbackHook = hook;
@@ -982,7 +999,7 @@ static void installRoutes(httplib::Server& server, Engine& e) {
             ok = track::exchangeCode(req.has_param("code") ? req.get_param_value("code") : "",
                                      track::resolveClientId(cfg.anilistClientId),
                                      track::resolveClientSecret(cfg.anilistClientSecret),
-                                     7654, error);
+                                     cfg.anilistRedirect, error);
         }
 
         const std::string body =
@@ -1032,8 +1049,21 @@ static void installRoutes(httplib::Server& server, Engine& e) {
 
     server.Post("/api/account/login", [](const httplib::Request&, httplib::Response& res) {
         const Settings cfg = currentSettings();
+        // In the app, use the window we control and the implicit grant - no
+        // redirect handling, nothing to copy. The browser hand-off remains for
+        // the console build.
+        if (g_authHook) {
+            const std::string inApp =
+                track::implicitAuthorizeUrl(track::resolveClientId(cfg.anilistClientId));
+            if (!inApp.empty()) {
+                g_authHook(inApp.c_str());
+                res.set_content(json{{"ok", true}, {"inApp", true}}.dump(), "application/json");
+                return;
+            }
+        }
+
         const std::string url =
-            track::authorizeUrl(track::resolveClientId(cfg.anilistClientId), 7654);
+            track::authorizeUrl(track::resolveClientId(cfg.anilistClientId), cfg.anilistRedirect);
         if (url.empty()) {
             res.set_content(
                 json{{"ok", false},
@@ -1046,6 +1076,33 @@ static void installRoutes(httplib::Server& server, Engine& e) {
         }
         openExternal(url);
         res.set_content(json{{"ok", true}, {"url", url}}.dump(), "application/json");
+    });
+
+    // Accepts either a bare code or the entire URL the browser landed on, so
+    // a redirect we cannot listen on still completes the link.
+    server.Post("/api/account/code", [](const httplib::Request& req, httplib::Response& res) {
+        json in;
+        try {
+            in = json::parse(req.body);
+        } catch (const std::exception&) {
+            res.set_content("{\"ok\":false,\"error\":\"bad request\"}", "application/json");
+            return;
+        }
+
+        std::string code = in.value("code", "");
+        const auto at = code.find("code=");
+        if (at != std::string::npos) {
+            code = code.substr(at + 5);
+            const auto amp = code.find_first_of("&# ");
+            if (amp != std::string::npos) code = code.substr(0, amp);
+        }
+
+        const Settings cfg = currentSettings();
+        std::string error;
+        const bool ok = track::exchangeCode(code, track::resolveClientId(cfg.anilistClientId),
+                                            track::resolveClientSecret(cfg.anilistClientSecret),
+                                            cfg.anilistRedirect, error);
+        res.set_content(json{{"ok", ok}, {"error", error}}.dump(), "application/json");
     });
 
     server.Post("/api/account/logout", [](const httplib::Request&, httplib::Response& res) {
