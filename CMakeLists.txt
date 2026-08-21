@@ -30,6 +30,7 @@ add_library(tsuzuki_core STATIC
   src/anilist.cpp
   src/sources/sources.cpp
   src/ui.cpp
+  src/player.cpp
 )
 target_include_directories(tsuzuki_core PUBLIC src)
 target_link_libraries(tsuzuki_core PUBLIC

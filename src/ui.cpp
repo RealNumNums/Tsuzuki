@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -28,6 +29,7 @@
 #endif
 
 #include "anilist.hpp"
+#include "player.hpp"
 #include "scan.hpp"
 #include "sources/source.hpp"
 #include "ui_page.hpp"
@@ -66,7 +68,10 @@ struct Engine {
     std::shared_ptr<const lt::torrent_info> info;
     std::vector<ScannedFile> files;
 
+    int runtimeMinutes = 0;   // from AniList, for bitrate estimation
+
     std::atomic<bool> playing{false};
+    std::atomic<bool> stopRequested{false};
     std::atomic<bool> done{true};
     std::atomic<int> progress{0};
     std::mutex messageMutex;
@@ -82,12 +87,98 @@ struct Engine {
     }
 };
 
+// Persisted preferences. Kept as plain JSON next to the WebView2 profile so
+// it can be inspected or deleted by hand.
+struct Settings {
+    std::string savePath;
+    double speedLimit = 0;      // Mb/s, 0 = unlimited
+    int maxConnections = 200;
+    std::string quality = "1080";
+    std::string audioLang;
+    std::string subLang;
+    double bufferSeconds = 0;   // 0 = size it from measured throughput
+    bool deleteAfter = true;
+    bool subsOn = true;
+};
+
+Settings g_settings;
+std::mutex g_settingsMutex;
+
+std::string settingsPath() {
+    const char* base = std::getenv("LOCALAPPDATA");
+    std::string dir = base ? std::string(base) + "\\Tsuzuki" : std::string(".");
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    return dir + "\\settings.json";
+}
+
+json settingsToJson(const Settings& s) {
+    return json{{"savePath", s.savePath},
+                {"speedLimit", s.speedLimit},
+                {"maxConnections", s.maxConnections},
+                {"quality", s.quality},
+                {"audioLang", s.audioLang},
+                {"subLang", s.subLang},
+                {"bufferSeconds", s.bufferSeconds},
+                {"deleteAfter", s.deleteAfter},
+                {"subsOn", s.subsOn}};
+}
+
+void settingsFromJson(const json& j, Settings& s) {
+    if (j.contains("savePath") && j["savePath"].is_string()) s.savePath = j["savePath"];
+    if (j.contains("speedLimit") && j["speedLimit"].is_number()) s.speedLimit = j["speedLimit"];
+    if (j.contains("maxConnections") && j["maxConnections"].is_number()) s.maxConnections = j["maxConnections"];
+    if (j.contains("quality") && j["quality"].is_string()) s.quality = j["quality"];
+    if (j.contains("audioLang") && j["audioLang"].is_string()) s.audioLang = j["audioLang"];
+    if (j.contains("subLang") && j["subLang"].is_string()) s.subLang = j["subLang"];
+    if (j.contains("bufferSeconds") && j["bufferSeconds"].is_number()) s.bufferSeconds = j["bufferSeconds"];
+    if (j.contains("deleteAfter") && j["deleteAfter"].is_boolean()) s.deleteAfter = j["deleteAfter"];
+    if (j.contains("subsOn") && j["subsOn"].is_boolean()) s.subsOn = j["subsOn"];
+}
+
+void loadSettings() {
+    std::ifstream in(settingsPath());
+    if (!in) return;
+    try {
+        json j;
+        in >> j;
+        std::lock_guard<std::mutex> lock(g_settingsMutex);
+        settingsFromJson(j, g_settings);
+    } catch (const std::exception&) {
+        // A corrupt settings file should not stop the app starting.
+    }
+}
+
+void saveSettings() {
+    std::lock_guard<std::mutex> lock(g_settingsMutex);
+    std::ofstream out(settingsPath());
+    if (out) out << settingsToJson(g_settings).dump(2) << "\n";
+}
+
+Settings currentSettings() {
+    std::lock_guard<std::mutex> lock(g_settingsMutex);
+    return g_settings;
+}
+
 void* g_videoHost = nullptr;
 PlaybackHook g_playbackHook = nullptr;
 
 Engine& engine() {
     static Engine e;
     return e;
+}
+
+// Rate and connection limits can change while the session is running.
+void applySessionSettings(Engine& e, const Settings& cfg) {
+    lt::settings_pack sp;
+    const int bytes = cfg.speedLimit > 0
+                          ? static_cast<int>(cfg.speedLimit * 1000000.0 / 8.0)
+                          : 0;  // libtorrent treats 0 as unlimited
+    sp.set_int(lt::settings_pack::download_rate_limit, bytes);
+    sp.set_int(lt::settings_pack::upload_rate_limit, bytes);
+    sp.set_int(lt::settings_pack::connections_limit,
+               cfg.maxConnections > 0 ? cfg.maxConnections : 200);
+    e.session.apply_settings(sp);
 }
 
 std::string findMpv() {
@@ -182,6 +273,7 @@ bool openTorrent(Engine& e, const std::string& magnet, std::string& err) {
 // Buffers head+tail then hands the file to mpv. Runs on its own thread so the
 // UI stays responsive.
 void playFile(Engine& e, int index) {
+    e.stopRequested = false;
     e.playing = true;
     e.done = false;
     e.progress = 0;
@@ -206,9 +298,7 @@ void playFile(Engine& e, int index) {
     e.handle.unset_flags(lt::torrent_flags::upload_mode);
     e.handle.set_flags(lt::torrent_flags::sequential_download);
 
-    // See main.cpp: an MP4's moov atom lives at the end, so the tail must be
-    // present before any player can parse the container.
-    constexpr std::int64_t kBufferBytes = 24 * 1024 * 1024;
+    // The tail must land before any player can parse the container.
     constexpr int kTailPieces = 4;
 
     const lt::file_index_t fidx{chosen->index};
@@ -216,50 +306,176 @@ void playFile(Engine& e, int index) {
     const int firstPiece = static_cast<int>(e.info->map_file(fidx, 0, 0).piece);
     const int lastPiece = static_cast<int>(
         e.info->map_file(fidx, std::max<std::int64_t>(chosen->size - 1, 0), 0).piece);
-    const int headPieces = std::max(
-        1, static_cast<int>((std::min(kBufferBytes, chosen->size) + pieceLen - 1) / pieceLen));
+    // ---- adaptive pre-buffer -------------------------------------------
+    //
+    // A fixed buffer is either wasteful on a fast swarm or too small on a slow
+    // one. Size it from the numbers we can actually measure: the file's bitrate
+    // and the rate we are pulling it at.
+    const double durationSec = e.runtimeMinutes > 0 ? e.runtimeMinutes * 60.0 : 24 * 60.0;
+    const double bitrate = static_cast<double>(chosen->size) / durationSec;  // bytes/sec
 
-    std::vector<int> needed;
-    for (int p = firstPiece; p <= std::min(firstPiece + headPieces - 1, lastPiece); ++p) {
-        needed.push_back(p);
+    // The tail must land before any player can parse the container, and a few
+    // head pieces before it can start decoding. Fetch that much first, and use
+    // the wait to measure throughput.
+    std::vector<int> priming;
+    const int primeHead = std::max(1, static_cast<int>((4 * 1024 * 1024 + pieceLen - 1) / pieceLen));
+    for (int p = firstPiece; p <= std::min(firstPiece + primeHead - 1, lastPiece); ++p) {
+        priming.push_back(p);
     }
     for (int p = std::max(lastPiece - kTailPieces + 1, firstPiece); p <= lastPiece; ++p) {
-        if (std::find(needed.begin(), needed.end(), p) == needed.end()) needed.push_back(p);
+        if (std::find(priming.begin(), priming.end(), p) == priming.end()) priming.push_back(p);
     }
-    for (const int p : needed) {
+    for (const int p : priming) {
         e.handle.piece_priority(lt::piece_index_t{p}, lt::top_priority);
         e.handle.set_piece_deadline(lt::piece_index_t{p}, 0);
     }
 
+    const auto measureStart = std::chrono::steady_clock::now();
+    const std::int64_t startBytes = e.handle.status().total_done;
     for (;;) {
         int have = 0;
-        for (const int p : needed) {
+        for (const int p : priming) {
             if (e.handle.have_piece(lt::piece_index_t{p})) ++have;
         }
-        const int pct = needed.empty() ? 100 : (have * 100 / static_cast<int>(needed.size()));
-        e.progress = pct;
-        e.setMessage("Buffering " + std::to_string(pct) + "% (" +
+        const int pct = priming.empty() ? 100 : (have * 100 / static_cast<int>(priming.size()));
+        e.progress = pct / 3;
+        e.setMessage("Preparing stream " + std::to_string(pct) + "% (" +
                      std::to_string(e.handle.status().num_peers) + " peers)");
-        if (have == static_cast<int>(needed.size())) break;
+        if (have == static_cast<int>(priming.size())) break;
+        if (e.stopRequested) { e.done = true; e.playing = false; return; }
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    }
+
+    const double elapsed = std::max(
+        0.5, std::chrono::duration<double>(std::chrono::steady_clock::now() - measureStart).count());
+    const double rate = std::max(1.0, static_cast<double>(e.handle.status().total_done - startBytes) / elapsed);
+
+    // If we are outpacing the video we only need a courtesy buffer. If we are
+    // behind, pre-load enough to cover the shortfall across the whole runtime,
+    // because that gap never closes on its own.
+    const Settings cfg = currentSettings();
+
+    double bufferSeconds = 8.0;
+    if (cfg.bufferSeconds > 0) {
+        // Explicit override from settings wins over the measurement.
+        bufferSeconds = cfg.bufferSeconds;
+    } else if (rate < bitrate) {
+        const double deficit = (bitrate - rate) / bitrate;  // fraction we cannot keep up with
+        bufferSeconds = std::min(durationSec * deficit + 10.0, durationSec * 0.9);
+    }
+    const std::int64_t bufferBytes =
+        std::min<std::int64_t>(static_cast<std::int64_t>(bufferSeconds * bitrate), chosen->size);
+    const int bufferPieces = std::max(
+        1, static_cast<int>((bufferBytes + pieceLen - 1) / pieceLen));
+
+    e.setMessage("Buffering " + std::to_string(static_cast<int>(bufferSeconds)) + "s at " +
+                 std::to_string(static_cast<int>(rate / 1024 / 1024 * 8)) + " Mb/s");
+
+    for (int p = firstPiece; p <= std::min(firstPiece + bufferPieces - 1, lastPiece); ++p) {
+        e.handle.piece_priority(lt::piece_index_t{p}, lt::top_priority);
+        e.handle.set_piece_deadline(lt::piece_index_t{p}, 0);
+    }
+    for (;;) {
+        int have = 0;
+        const int last = std::min(firstPiece + bufferPieces - 1, lastPiece);
+        for (int p = firstPiece; p <= last; ++p) {
+            if (e.handle.have_piece(lt::piece_index_t{p})) ++have;
+        }
+        const int total = last - firstPiece + 1;
+        const int pct = total <= 0 ? 100 : (have * 100 / total);
+        e.progress = 33 + pct * 2 / 3;
+        e.setMessage("Buffering " + std::to_string(pct) + "% - " +
+                     std::to_string(static_cast<int>(bufferSeconds)) + "s ahead, " +
+                     std::to_string(e.handle.status().num_peers) + " peers");
+        if (have >= total) break;
+        if (e.stopRequested) { e.done = true; e.playing = false; return; }
         std::this_thread::sleep_for(std::chrono::milliseconds(400));
     }
 
     e.progress = 100;
-    e.setMessage("Playing in mpv - close mpv to finish.");
+    e.setMessage("Playing");
 
     const std::string path = e.savePath + "/" + chosen->path;
 
-    std::string cmd = "\"\"" + findMpv() + "\"";
+    std::string cmd = "\"" + findMpv() + "\"";
     if (g_videoHost) {
         // mpv draws straight into our window, so there is no second window and
         // no taskbar entry - it looks and behaves like a built-in player.
         cmd += " --wid=" + std::to_string(reinterpret_cast<std::uintptr_t>(g_videoHost));
         cmd += " --no-border --osc=yes --keep-open=no";
     }
-    cmd += " \"" + path + "\"\"";
+    cmd += " --input-ipc-server=" + player::pipeName();
+    if (!cfg.audioLang.empty()) cmd += " --alang=" + cfg.audioLang;
+    if (!cfg.subLang.empty()) cmd += " --slang=" + cfg.subLang;
+    cmd += cfg.subsOn ? " --sub-visibility=yes" : " --sub-visibility=no";
+    cmd += " --force-window=yes --cache=yes --demuxer-max-bytes=200MiB";
+    cmd += " \"" + path + "\"";
 
     if (g_playbackHook) g_playbackHook(true);
-    std::system(cmd.c_str());
+
+    // CreateProcess rather than system(): we need to stay alive alongside mpv
+    // to keep feeding it pieces ahead of the playhead.
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    std::vector<char> mutableCmd(cmd.begin(), cmd.end());
+    mutableCmd.push_back('\0');
+
+    if (!CreateProcessA(nullptr, mutableCmd.data(), nullptr, nullptr, FALSE, 0, nullptr,
+                        nullptr, &si, &pi)) {
+        if (g_playbackHook) g_playbackHook(false);
+        e.setMessage("Could not start mpv. Is it installed?");
+        e.done = true;
+        e.playing = false;
+        return;
+    }
+
+    // ---- rolling window ------------------------------------------------
+    //
+    // Follow the playhead and keep a window of pieces ahead of it at top
+    // priority, instead of downloading the file front-to-back and hoping.
+    // Position comes from mpv itself over the IPC socket.
+    const int windowPieces = std::max(2, bufferPieces);
+    int lastWindowStart = firstPiece;
+
+    while (WaitForSingleObject(pi.hProcess, 500) == WAIT_TIMEOUT) {
+        if (e.stopRequested) {
+            player::stop();
+            break;
+        }
+
+        const player::State ps = player::state();
+        if (!ps.running || ps.duration <= 0) continue;
+
+        const double fraction = std::min(1.0, ps.position / ps.duration);
+        const std::int64_t offset = static_cast<std::int64_t>(fraction * chosen->size);
+        const int atPiece = static_cast<int>(
+            e.info->map_file(fidx, std::min(offset, chosen->size - 1), 0).piece);
+
+        if (atPiece != lastWindowStart) {
+            lastWindowStart = atPiece;
+            const int windowEnd = std::min(atPiece + windowPieces, lastPiece);
+            for (int p = atPiece; p <= windowEnd; ++p) {
+                if (e.handle.have_piece(lt::piece_index_t{p})) continue;
+                e.handle.piece_priority(lt::piece_index_t{p}, lt::top_priority);
+                // Nearer pieces get tighter deadlines so libtorrent orders
+                // requests by how soon each one is actually needed.
+                e.handle.set_piece_deadline(lt::piece_index_t{p}, (p - atPiece) * 500);
+            }
+        }
+
+        int ahead = 0;
+        for (int p = atPiece; p <= std::min(atPiece + windowPieces, lastPiece); ++p) {
+            if (!e.handle.have_piece(lt::piece_index_t{p})) break;
+            ++ahead;
+        }
+        const double secsAhead = bitrate > 0 ? (double)ahead * pieceLen / bitrate : 0;
+        e.setMessage(ps.paused ? "Paused" : "Playing - " + std::to_string((int)secsAhead) +
+                                                "s buffered");
+    }
+
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
     if (g_playbackHook) g_playbackHook(false);
 
     // Remove only the episode just watched, and keep the torrent open. Tearing
@@ -279,6 +495,13 @@ void playFile(Engine& e, int index) {
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+
+    if (!cfg.deleteAfter) {
+        e.setMessage("Finished. Kept on disk (delete-after-watching is off).");
+        e.done = true;
+        e.playing = false;
+        return;
     }
 
     e.setMessage(removed ? "Episode removed. Pick another one."
@@ -417,6 +640,7 @@ static void installRoutes(httplib::Server& server, Engine& e) {
                                                      {"thumb", ei.thumbnail}};
                 }
                 reply["episodeInfo"] = eps;
+                e.runtimeMinutes = d.duration;
             }
         }
 
@@ -477,11 +701,94 @@ static void installRoutes(httplib::Server& server, Engine& e) {
         res.set_content("{\"ok\":true}", "application/json");
     });
 
+    server.Get("/api/settings", [&e](const httplib::Request&, httplib::Response& res) {
+        Settings cfg = currentSettings();
+        if (cfg.savePath.empty()) cfg.savePath = e.savePath;
+        res.set_content(settingsToJson(cfg).dump(), "application/json");
+    });
+
+    server.Post("/api/settings", [&e](const httplib::Request& req, httplib::Response& res) {
+        json in;
+        try {
+            in = json::parse(req.body);
+        } catch (const std::exception&) {
+            res.set_content("{\"error\":\"bad request\"}", "application/json");
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_settingsMutex);
+            settingsFromJson(in, g_settings);
+        }
+        saveSettings();
+
+        const Settings cfg = currentSettings();
+        applySessionSettings(e, cfg);
+        // A new download folder applies to the next torrent, not the open one.
+        if (!cfg.savePath.empty() && !e.handle.is_valid()) e.savePath = cfg.savePath;
+
+        res.set_content(settingsToJson(cfg).dump(), "application/json");
+    });
+
+    server.Get("/api/player/state", [&e](const httplib::Request&, httplib::Response& res) {
+        const player::State ps = player::state();
+        json tracks = json::array();
+        for (const auto& t : ps.tracks) {
+            tracks.push_back({{"id", t.id},
+                              {"type", t.type},
+                              {"title", t.title},
+                              {"lang", t.lang},
+                              {"codec", t.codec},
+                              {"selected", t.selected},
+                              {"default", t.isDefault}});
+        }
+        res.set_content(json{{"running", ps.running},
+                             {"paused", ps.paused},
+                             {"position", ps.position},
+                             {"duration", ps.duration},
+                             {"volume", ps.volume},
+                             {"subsVisible", ps.subsVisible},
+                             {"buffered", e.getMessage()},
+                             {"tracks", tracks}}
+                            .dump(),
+                        "application/json");
+    });
+
+    server.Post("/api/player/command", [&e](const httplib::Request& req, httplib::Response& res) {
+        json in;
+        try {
+            in = json::parse(req.body);
+        } catch (const std::exception&) {
+            res.set_content("{\"error\":\"bad request\"}", "application/json");
+            return;
+        }
+        const std::string action = in.value("action", "");
+        if (action == "pause") {
+            player::togglePause();
+        } else if (action == "seek") {
+            player::seekRelative(in.value("value", 0.0));
+        } else if (action == "seekTo") {
+            player::seekAbsolute(in.value("value", 0.0));
+        } else if (action == "audio") {
+            player::setAudioTrack(in.value("value", 0));
+        } else if (action == "sub") {
+            player::setSubTrack(in.value("value", 0));
+        } else if (action == "subsVisible") {
+            player::setSubsVisible(in.value("value", true));
+        } else if (action == "volume") {
+            player::setVolume(in.value("value", 100));
+        } else if (action == "stop") {
+            e.stopRequested = true;
+            player::stop();
+        }
+        res.set_content("{\"ok\":true}", "application/json");
+    });
+
     server.Get("/api/status", [&e](const httplib::Request&, httplib::Response& res) {
         json reply{
             {"message", e.getMessage()},
             {"progress", e.progress.load()},
             {"done", e.done.load()},
+            {"playing", e.playing.load()},
         };
         res.set_content(reply.dump(), "application/json");
     });
@@ -490,6 +797,12 @@ static void installRoutes(httplib::Server& server, Engine& e) {
 int run(int port, const std::string& savePath) {
     Engine& e = engine();
     e.savePath = savePath;
+    loadSettings();
+    {
+        const Settings cfg = currentSettings();
+        if (!cfg.savePath.empty()) e.savePath = cfg.savePath;
+        applySessionSettings(e, cfg);
+    }
 
     httplib::Server server;
     installRoutes(server, e);
@@ -515,6 +828,12 @@ int run(int port, const std::string& savePath) {
 bool startBackground(int port, const std::string& savePath) {
     Engine& e = engine();
     e.savePath = savePath;
+    loadSettings();
+    {
+        const Settings cfg = currentSettings();
+        if (!cfg.savePath.empty()) e.savePath = cfg.savePath;
+        applySessionSettings(e, cfg);
+    }
 
     // Leaked deliberately: the server must outlive this call and lives until
     // the process exits.

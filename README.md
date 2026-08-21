@@ -49,7 +49,7 @@ is reported, not papered over.
 | Filename parsing | Anitomy (native C++, vendored via FetchContent) |
 | HTTP / JSON / XML | libcurl, nlohmann-json, pugixml |
 | UI | Win32 + WebView2 (`Tsuzuki.exe`); HTML via cpp-httplib on loopback |
-| Playback | mpv rendered into the app window (--wid) |
+| Playback | mpv in-window (--wid), driven over its JSON IPC socket |
 | Build | CMake + vcpkg manifest mode, MSVC |
 
 ## Roadmap
@@ -101,6 +101,28 @@ tsuzuki-cli "magnet:?xt=urn:btih:..."              # show the table, pick a file
 tsuzuki-cli "magnet:?..." --episode 5              # play episode 5, or fail loudly
 tsuzuki-cli "magnet:?..." --episode 5 --keep       # don't clean up afterwards
 ```
+
+## Controls and settings
+
+Playback controls live in a strip under the video: play/pause, seek, scrub,
+audio track, subtitle track (including Off), and volume — all driven through
+mpv's IPC socket rather than expecting anyone to know its keybindings.
+
+Settings persist to `%LOCALAPPDATA%\Tsuzuki\settings.json`: download folder,
+speed limit, max connections, preferred quality, preferred audio/subtitle
+language, buffer override, delete-after-watching, subtitles on by default.
+
+## Adaptive streaming
+
+Buffer size is measured, not guessed. Tsuzuki primes the container (head plus
+tail), times how fast that arrives, and compares it against the file's bitrate.
+Keeping up needs only a short buffer; falling behind pre-loads enough to cover
+the shortfall across the whole runtime, because that gap never closes on its
+own.
+
+A rolling window then follows the playhead — read from mpv over IPC — keeping
+pieces ahead of playback at top priority, with deadlines that tighten as a
+piece gets closer to being needed.
 
 ## Licence note
 

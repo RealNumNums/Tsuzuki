@@ -133,6 +133,66 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
     border-radius:50%;animation:spin .7s linear infinite;display:inline-block;vertical-align:-3px;margin-right:8px;
   }
   @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ---- player control strip ---- */
+  #playerbar{display:none}
+  body.player{background:#0b0a12;min-height:0}
+  body.player header,body.player .searchbar,body.player .hint,body.player #out{display:none}
+  body.player main{padding:0;max-width:none}
+  body.player #playerbar{
+    display:flex;align-items:center;gap:14px;padding:0 18px;height:92px;
+    background:linear-gradient(180deg,#15131f,#0f0e18);border-top:1px solid var(--line);
+  }
+  #playerbar .pb{
+    background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
+    border-radius:9px;padding:9px 13px;font:600 13px/1 "Segoe UI",sans-serif;cursor:pointer;
+  }
+  #playerbar .pb:hover{border-color:var(--accent);color:var(--accent)}
+  #playerbar .pb.primary{
+    background:linear-gradient(180deg,var(--pink-soft),var(--pink));color:#2a0d18;border:0;
+    min-width:52px;font-size:15px;
+  }
+  #playerbar .grow{flex:1;display:flex;flex-direction:column;gap:5px;min-width:120px}
+  #playerbar .times{display:flex;justify-content:space-between;color:var(--dim);font-size:11.5px;
+    font-variant-numeric:tabular-nums}
+  #seek{
+    -webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:99px;
+    background:var(--panel-2);outline:none;cursor:pointer;padding:0;border:0;
+  }
+  #seek::-webkit-slider-thumb{
+    -webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+    background:var(--accent);cursor:pointer;box-shadow:0 0 0 3px rgba(255,92,141,.2);
+  }
+  #playerbar select{padding:8px 10px;font-size:12.5px;max-width:190px}
+  #playerbar .vol{width:88px}
+  #playerbar .lbl{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.8px}
+  #playerbar .stack{display:flex;flex-direction:column;gap:3px}
+  #buffered{color:var(--cyan);font-size:11.5px;white-space:nowrap}
+
+  /* ---- settings ---- */
+  .setrow{
+    display:flex;align-items:center;gap:16px;padding:15px 16px;border-bottom:1px solid var(--line);
+  }
+  .setrow:last-child{border-bottom:0}
+  .setrow .info{flex:1;min-width:0}
+  .setrow .info b{display:block;font-weight:600;font-size:14px}
+  .setrow .info span{color:var(--dim);font-size:12.5px}
+  .setrow input[type=text],.setrow input[type=number],.setrow select{min-width:190px}
+  .toggle{
+    width:46px;height:26px;border-radius:99px;background:var(--panel-2);border:1px solid var(--line);
+    position:relative;cursor:pointer;flex:none;transition:background .18s ease;
+  }
+  .toggle::after{
+    content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;
+    background:var(--dim);transition:transform .18s ease,background .18s ease;
+  }
+  .toggle.on{background:rgba(255,92,141,.22);border-color:var(--accent)}
+  .toggle.on::after{transform:translateX(20px);background:var(--accent)}
+  .gear{
+    background:transparent;border:1px solid var(--line);color:var(--dim);
+    margin-left:auto;font-weight:500;
+  }
+  .gear:hover{color:var(--ink);border-color:var(--pink)}
 </style>
 )HTMLPAGE"
     R"HTMLPAGE(</head>
@@ -147,6 +207,7 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
     <circle cx="82" cy="64" r="5.5" fill="#5BE9E9"/><circle cx="96" cy="64" r="5.5" fill="#5BE9E9" opacity=".72"/><circle cx="110" cy="64" r="5.5" fill="#5BE9E9" opacity=".45"/>
   </svg>
   <h1>Tsuzuki <span>&#32154;&#12365; &middot; to be continued</span></h1>
+  <button class="gear" id="gear">Settings</button>
 </header>
 
 <main>
@@ -163,6 +224,20 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
   </div>
   <div class="hint">Downloads are deleted after you finish watching. Playback opens in mpv.</div>
   <div id="out"></div>
+
+  <div id="playerbar">
+    <button class="pb" id="pStop" title="Stop and go back">&#9632;</button>
+    <button class="pb primary" id="pPlay" title="Play / pause (space)">&#9208;</button>
+    <button class="pb" id="pBack" title="Back 10s">&#8630; 10</button>
+    <button class="pb" id="pFwd" title="Forward 30s">30 &#8631;</button>
+    <div class="grow">
+      <input type="range" id="seek" min="0" max="1000" value="0">
+      <div class="times"><span id="tNow">0:00</span><span id="buffered"></span><span id="tEnd">0:00</span></div>
+    </div>
+    <div class="stack"><span class="lbl">Audio</span><select id="aTrack"></select></div>
+    <div class="stack"><span class="lbl">Subtitles</span><select id="sTrack"></select></div>
+    <div class="stack"><span class="lbl">Volume</span><input type="range" class="vol" id="vol" min="0" max="130" value="100"></div>
+  </div>
 </main>
 
 <script>
@@ -344,6 +419,159 @@ async function poll(){
 $('#go').onclick = search;
 $('#q').addEventListener('keydown', e => { if(e.key==='Enter') search(); });
 
+)HTMLPAGE"
+    R"HTMLPAGE(
+/* ---------------------------------------------------------- player bar */
+
+const fmt = t => {
+  if(!isFinite(t) || t < 0) t = 0;
+  const m = Math.floor(t/60), sec = Math.floor(t%60);
+  return m + ':' + String(sec).padStart(2,'0');
+};
+
+let seeking = false, inPlayer = false;
+
+async function playerCmd(action, value){
+  try{
+    await fetch('/api/player/command', {method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({action, value})});
+  }catch(e){}
+}
+
+function fillTracks(sel, tracks, type, noneLabel){
+  const want = tracks.filter(t => t.type === type);
+  const cur = want.find(t => t.selected);
+  const key = want.map(t => t.id+':'+t.selected).join(',');
+  if(sel.dataset.key === key) return;
+  sel.dataset.key = key;
+  sel.innerHTML = '';
+  if(noneLabel){
+    const o = document.createElement('option');
+    o.value = '0'; o.textContent = noneLabel;
+    sel.appendChild(o);
+  }
+  for(const t of want){
+    const o = document.createElement('option');
+    o.value = String(t.id);
+    const bits = [];
+    if(t.lang) bits.push(t.lang.toUpperCase());
+    if(t.title) bits.push(t.title);
+    if(!bits.length && t.codec) bits.push(t.codec);
+    o.textContent = bits.join(' - ') || ('Track ' + t.id);
+    sel.appendChild(o);
+  }
+  sel.value = cur ? String(cur.id) : '0';
+}
+
+async function refreshPlayer(){
+  let st;
+  try{ st = await (await fetch('/api/player/state')).json(); }catch(e){ return; }
+  if(!st.running) return;
+
+  $('#pPlay').innerHTML = st.paused ? '&#9654;' : '&#9208;';
+  if(!seeking && st.duration > 0){
+    $('#seek').value = String(Math.round(st.position / st.duration * 1000));
+  }
+  $('#tNow').textContent = fmt(st.position);
+  $('#tEnd').textContent = fmt(st.duration);
+  $('#buffered').textContent = st.buffered || '';
+  fillTracks($('#aTrack'), st.tracks, 'audio', null);
+  fillTracks($('#sTrack'), st.tracks, 'sub', 'Off');
+  if(document.activeElement !== $('#vol')) $('#vol').value = String(st.volume);
+}
+
+function enterPlayer(){
+  if(inPlayer) return;
+  inPlayer = true;
+  document.body.classList.add('player');
+}
+function exitPlayer(){
+  if(!inPlayer) return;
+  inPlayer = false;
+  document.body.classList.remove('player');
+}
+
+$('#pStop').onclick = () => { playerCmd('stop'); exitPlayer(); };
+$('#pPlay').onclick = () => playerCmd('pause');
+$('#pBack').onclick = () => playerCmd('seek', -10);
+$('#pFwd').onclick  = () => playerCmd('seek', 30);
+$('#seek').addEventListener('input', () => { seeking = true; });
+$('#seek').addEventListener('change', async () => {
+  let st;
+  try{ st = await (await fetch('/api/player/state')).json(); }catch(e){ seeking=false; return; }
+  if(st.duration > 0) playerCmd('seekTo', $('#seek').value / 1000 * st.duration);
+  seeking = false;
+});
+$('#aTrack').onchange = () => playerCmd('audio', parseInt($('#aTrack').value,10));
+$('#sTrack').onchange = () => playerCmd('sub', parseInt($('#sTrack').value,10));
+$('#vol').onchange = () => playerCmd('volume', parseInt($('#vol').value,10));
+
+// Heartbeat: the app swaps the window layout when playback starts, so the page
+// has to notice on its own rather than only when it started the playback.
+setInterval(async () => {
+  let s;
+  try{ s = await (await fetch('/api/status')).json(); }catch(e){ return; }
+  if(s.playing){ enterPlayer(); refreshPlayer(); }
+  else { exitPlayer(); }
+}, 900);
+
+/* ------------------------------------------------------------ settings */
+
+const SETTING_ROWS = [
+  ['savePath','text','Download folder','Where episodes are stored while you watch them.'],
+  ['speedLimit','number','Speed limit (Mb/s)','0 means unlimited.'],
+  ['maxConnections','number','Max connections','Peers per torrent. Higher is faster but noisier.'],
+  ['quality','select','Preferred quality','Used as the default in search.','|1080|720|480'],
+  ['audioLang','text','Preferred audio language','Track code to select automatically, e.g. jpn or eng.'],
+  ['subLang','text','Preferred subtitle language','Track code to select automatically, e.g. eng.'],
+  ['bufferSeconds','number','Extra buffer (seconds)','0 lets Tsuzuki size the buffer from measured speed.'],
+  ['deleteAfter','toggle','Delete after watching','Remove each episode once you finish it.'],
+  ['subsOn','toggle','Subtitles on by default','Applies when a subtitle track exists.'],
+];
+
+async function showSettings(){
+  let cfg = {};
+  try{ cfg = await (await fetch('/api/settings')).json(); }catch(e){}
+  let html = '<button class="back" id="sBack">&larr; Back</button>' +
+             '<div class="panel"><h3>Settings</h3>';
+  for(const [key,type,label,desc,opts] of SETTING_ROWS){
+    let control;
+    if(type === 'toggle'){
+      control = '<div class="toggle'+(cfg[key]?' on':'')+'" data-k="'+key+'"></div>';
+    } else if(type === 'select'){
+      const choices = opts.split('|');
+      control = '<select data-k="'+key+'">' + choices.map(v =>
+        '<option value="'+v+'"'+(String(cfg[key]||'')===v?' selected':'')+'>'+(v||'Any')+(v?'p':'')+'</option>').join('') + '</select>';
+    } else {
+      control = '<input type="'+type+'" data-k="'+key+'" value="'+esc(cfg[key]==null?'':cfg[key])+'">';
+    }
+    html += '<div class="setrow"><div class="info"><b>'+esc(label)+'</b><span>'+esc(desc)+'</span></div>'+control+'</div>';
+  }
+  html += '</div><div class="hint" id="sSaved" style="margin-top:12px"></div>';
+  out.innerHTML = html;
+
+  $('#sBack').onclick = () => mascot('Search for something to watch.');
+  const save = async () => {
+    const next = {};
+    document.querySelectorAll('[data-k]').forEach(el => {
+      const k = el.dataset.k;
+      if(el.classList.contains('toggle')) next[k] = el.classList.contains('on');
+      else if(el.type === 'number') next[k] = parseFloat(el.value) || 0;
+      else next[k] = el.value;
+    });
+    await fetch('/api/settings', {method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(next)});
+    $('#sSaved').textContent = 'Saved.';
+    setTimeout(() => { if($('#sSaved')) $('#sSaved').textContent = ''; }, 1600);
+  };
+  document.querySelectorAll('.toggle[data-k]').forEach(t =>
+    t.onclick = () => { t.classList.toggle('on'); save(); });
+  document.querySelectorAll('input[data-k],select[data-k]').forEach(el =>
+    el.onchange = save);
+}
+
+$('#gear').onclick = showSettings;
+
 const MASCOT = `)HTMLPAGE"
     R"HTMLPAGE(<svg viewBox="0 0 200 250" xmlns="http://www.w3.org/2000/svg"><defs>
 <linearGradient id="mh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4A417F"/><stop offset="1" stop-color="#2B2650"/></linearGradient>
@@ -371,7 +599,9 @@ const MASCOT = `)HTMLPAGE"
 // ?magnet=... opens a torrent straight away, so a specific release can be
 // linked to. ?q=... runs a search on load.
 const params = new URLSearchParams(location.search);
-if(params.get('magnet')){
+if(params.get('settings')){
+  showSettings();
+} else if(params.get('magnet')){
   if(params.get('ep')) $('#ep').value = params.get('ep');
   if(params.get('anilist')) lastAnilistId = parseInt(params.get('anilist'),10);
   openTorrent(params.get('magnet'));

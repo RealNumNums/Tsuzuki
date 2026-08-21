@@ -44,16 +44,35 @@ void onPlaybackActive(bool active) {
     if (g_main) PostMessageW(g_main, WM_PLAYBACK, active ? 1 : 0, 0);
 }
 
+// Height of the control strip shown under the video while something plays.
+constexpr int kControlBar = 92;
+
 void layout(HWND hwnd, bool playing) {
     RECT b{};
     GetClientRect(hwnd, &b);
-    if (g_video) {
-        MoveWindow(g_video, 0, 0, b.right - b.left, b.bottom - b.top, TRUE);
-        ShowWindow(g_video, playing ? SW_SHOW : SW_HIDE);
-    }
-    if (g_controller) {
-        g_controller->put_Bounds(b);
-        g_controller->put_IsVisible(playing ? FALSE : TRUE);
+    const int w = b.right - b.left;
+    const int h = b.bottom - b.top;
+
+    if (playing) {
+        // Video on top, interface reduced to a control strip underneath. The
+        // WebView2 cannot be layered transparently over a child HWND, so the
+        // controls sit below the picture rather than floating on it.
+        const int videoH = h > kControlBar ? h - kControlBar : h;
+        if (g_video) {
+            MoveWindow(g_video, 0, 0, w, videoH, TRUE);
+            ShowWindow(g_video, SW_SHOW);
+        }
+        if (g_controller) {
+            RECT bar{0, videoH, w, h};
+            g_controller->put_Bounds(bar);
+            g_controller->put_IsVisible(TRUE);
+        }
+    } else {
+        if (g_video) ShowWindow(g_video, SW_HIDE);
+        if (g_controller) {
+            g_controller->put_Bounds(b);
+            g_controller->put_IsVisible(TRUE);
+        }
     }
 }
 
