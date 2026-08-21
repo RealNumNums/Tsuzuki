@@ -204,6 +204,30 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
     padding:2px 6px;font-size:11.5px;color:var(--cyan);
   }
   .steps a{color:var(--pink-soft)}
+  .wiz{padding:0 16px 16px}
+  .wiz .step{display:flex;align-items:center;gap:12px;padding:9px 0}
+  .wiz .n{
+    width:22px;height:22px;border-radius:50%;background:var(--panel-2);
+    border:1px solid var(--line);color:var(--dim);flex:none;
+    font:600 11px/20px "Segoe UI",sans-serif;text-align:center;
+  }
+  .wiz .txt{flex:1;min-width:0;color:var(--dim);font-size:13px}
+  .wiz input{width:100%;font-size:13px}
+  .wiz .copyrow{display:flex;gap:8px;align-items:center;flex:1;min-width:0}
+  .wiz .copyrow code{
+    flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    background:var(--panel-2);border:1px solid var(--line);border-radius:6px;
+    padding:8px 10px;font-size:12px;color:var(--cyan);
+  }
+  .wiz .small{
+    background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
+    font:600 12px/1 "Segoe UI",sans-serif;padding:9px 12px;border-radius:7px;flex:none;
+  }
+  .wiz .small:hover{border-color:var(--accent);color:var(--accent)}
+  .alert{
+    margin:0 16px 14px;padding:10px 12px;border-radius:8px;font-size:12.5px;
+    background:rgba(255,214,107,.09);border:1px solid rgba(255,214,107,.32);color:var(--gold);
+  }
 
   /* ---- spoilers ---- */
   html[data-spoilers="hide"] .hero p,
@@ -730,7 +754,8 @@ function applyTheme(name){
   else delete document.documentElement.dataset.theme;
 }
 
-async function showSettings(){
+)HTMLPAGE"
+    R"HTMLPAGE(async function showSettings(){
   let cfg = {};
   try{ cfg = await (await fetch('/api/settings')).json(); }catch(e){}
   let acct = {};
@@ -751,16 +776,25 @@ async function showSettings(){
   }
   html += '</div>';
 
+  html += '<div id="aErr"></div>';
+
   if(acct.usingBuiltInId){
-    html += '<div class="steps">Using the built-in Tsuzuki client id. You can override it '+
-      'with your own further down if you would rather.</div>';
+    html += '<div class="steps">Using the built-in Tsuzuki client id.</div>';
   } else if(!acct.hasClientId){
-    html += '<div class="steps">This build has no client id baked in yet, so linking needs one '+
-      'of your own. A client id is a public identifier, not a secret.<ol>'+
-      '<li>Open <a href="https://anilist.co/settings/developer" target="_blank">anilist.co/settings/developer</a> and create a client.</li>'+
-      '<li>Set the redirect URL to <code>http://127.0.0.1:7654/auth/anilist</code></li>'+
-      '<li>Paste the client id into the field below. The secret is not needed.</li>'+
-      '</ol></div>';
+    // Everything needed, inline. No docs to go read, nothing to type by hand
+    // except one paste.
+    html += '<div class="wiz">'+
+      '<div class="step"><span class="n">1</span><div class="txt">Create an AniList app '+
+        '(any name).</div><button class="small" id="wOpen">Open AniList</button></div>'+
+      '<div class="step"><span class="n">2</span><div class="copyrow">'+
+        '<code id="wUrl">http://127.0.0.1:7654/auth/anilist</code>'+
+        '<button class="small" id="wCopy">Copy</button></div></div>'+
+      '<div class="step"><span class="n">3</span><div class="copyrow">'+
+        '<input id="wId" placeholder="Paste the Client ID here" autocomplete="off">'+
+        '</div></div>'+
+      '<div class="txt" style="padding-left:34px">Paste it and linking starts by itself. '+
+        'The client ID is public; the secret is never needed.</div>'+
+    '</div>';
   }
   html += '</div>';
 
@@ -812,21 +846,52 @@ async function showSettings(){
     $('#sSaved').textContent = 'Saved.';
     setTimeout(() => { if($('#sSaved')) $('#sSaved').textContent = ''; }, 1600);
   };
-  if($('#aIn')) $('#aIn').onclick = async () => {
+  const showErr = m => {
+    const box = $('#aErr');
+    if(box) box.innerHTML = m ? '<div class="alert">'+esc(m)+'</div>' : '';
+  };
+
+  if($('#wOpen')) $('#wOpen').onclick = () =>
+    window.open('https://anilist.co/settings/developer', '_blank');
+
+  if($('#wCopy')) $('#wCopy').onclick = async () => {
+    try{
+      await navigator.clipboard.writeText($('#wUrl').textContent.trim());
+      $('#wCopy').textContent = 'Copied';
+      setTimeout(() => { if($('#wCopy')) $('#wCopy').textContent = 'Copy'; }, 1500);
+    }catch(e){ showErr('Could not copy - select the URL and copy it manually.'); }
+  };
+
+  // Pasting the id is the whole interaction: save it, then start linking.
+  if($('#wId')) $('#wId').oninput = async () => {
+    const id = $('#wId').value.trim();
+    if(!/^[0-9]{3,}$/.test(id)) return;
+    showErr('');
+    await fetch('/api/settings', {method:'POST',headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({anilistClientId: id})});
+    startLink();
+  };
+
+  async function startLink(){
     let r = {};
     try{ r = await (await fetch('/api/account/login',{method:'POST'})).json(); }catch(e){}
-    if(!r.ok){
-      $('#sSaved').textContent = r.error || 'Could not start linking.';
-      return;
-    }
-    $('#sSaved').textContent = 'Approve Tsuzuki in the browser tab that just opened...';
-    // The browser hands the token back to the engine, so poll until it lands.
+    if(!r.ok){ showErr(r.error || 'Could not start linking.'); return; }
+    showErr('Approve Tsuzuki in the browser tab that just opened, then come back here.');
     let tries = 0;
     const timer = setInterval(async () => {
       let a = {};
       try{ a = await (await fetch('/api/account')).json(); }catch(e){}
       if(a.linked || ++tries > 60){ clearInterval(timer); showSettings(); }
     }, 2000);
+  }
+
+  if($('#aIn')) $('#aIn').onclick = async () => {
+    if(!acct.hasClientId){
+      showErr('Finish the three steps below first - it takes about 30 seconds.');
+      if($('#wId')) $('#wId').focus();
+      return;
+    }
+    startLink();
   };
 
   if($('#aOut')) $('#aOut').onclick = async () => {
