@@ -722,7 +722,6 @@ const SETTING_ROWS = [
   ['dhtPort','number','DHT port','0 is automatic.'],
   ['disableDHT','toggle','Disable DHT and LSD','For private trackers. Greatly reduces peer discovery.'],
   ['disablePeX','toggle','Disable peer exchange','For private trackers. Greatly reduces peer discovery.'],
-  ['anilistClientId','text','AniList client id','From anilist.co/settings/developer. No secret needed.'],
   ['syncProgress','toggle','Sync progress to AniList','Marks an episode watched once you pass 80% of it.'],
   ['uiScale','number','Interface scale','1.0 is normal. Try 1.2 on a high-DPI screen.'],
   ['hideSpoilers','toggle','Hide spoilers','Blurs synopses and episode titles until you hover them.'],
@@ -779,27 +778,23 @@ function applyTheme(name){
   html += '<div id="aErr"></div>';
 
   if(!acct.linked){
-    // One field, one button. Everything else was setup detail that only
-    // matters when something has already gone wrong, so it hides until asked
-    // for.
+    // Nothing to paste. The login happens in a window Tsuzuki owns and the
+    // token is read out of the redirect, so there is no secret, no code and
+    // no redirect URL for anyone to get right.
     html += '<div class="wiz">'+
-      '<div class="step"><div class="copyrow">'+
-        '<input id="wSecret" type="password" placeholder="Paste your AniList Client Secret" autocomplete="off">'+
-        '<button class="small" id="wSave">Link</button></div></div>'+
-      '<div class="txt" style="padding-top:8px">One time only - it is saved after this, and '+
-        'linking is a single click from then on.</div>'+
-      '<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--dim);font-size:12.5px">'+
-        'Not working, or setting this up for the first time?</summary>'+
-        '<div class="txt" style="padding-top:10px">'+
-          'On <a href="#" id="wOpen">anilist.co/settings/developer</a>, the client\'s '+
-          '<b>Redirect URL</b> must be exactly:</div>'+
+      '<div class="txt">Press <b>Link AniList</b>. A sign-in window opens; approve Tsuzuki '+
+        'and it links itself.</div>'+
+      '<details style="margin-top:10px"><summary style="cursor:pointer;color:var(--dim);font-size:12.5px">'+
+        'Advanced</summary>'+
+        '<div class="txt" style="padding-top:10px">Only needed if you are running your own '+
+          'AniList application, or using the command-line build, which has no window to sign '+
+          'in with.</div>'+
         '<div class="copyrow" style="margin:8px 0">'+
-          '<code id="wUrl">http://127.0.0.1:7654/auth/anilist</code>'+
-          '<button class="small" id="wCopy">Copy</button></div>'+
+          '<input id="wId" placeholder="Client ID" autocomplete="off" value="'+esc(acct.clientId||'')+'">'+
+          '<button class="small" id="wSaveId">Save</button></div>'+
         '<div class="copyrow" style="margin:8px 0">'+
-          '<input id="wId" placeholder="Client ID" autocomplete="off" value="'+esc(acct.clientId||'')+'"></div>'+
-        '<div class="txt">Paste both as text. Reading them off a screenshot gets a character '+
-          'wrong and AniList answers "invalid_client".</div>'+
+          '<input id="wPaste" placeholder="Paste a redirect URL containing ?code= or #access_token=" autocomplete="off">'+
+          '<button class="small" id="wPasteGo">Finish</button></div>'+
       '</details>'+
     '</div>';
   }
@@ -858,75 +853,39 @@ function applyTheme(name){
     if(box) box.innerHTML = m ? '<div class="alert">'+esc(m)+'</div>' : '';
   };
 
-  if($('#wOpen')) $('#wOpen').onclick = (e) => {
-    e.preventDefault();
-    window.open('https://anilist.co/settings/developer', '_blank');
-  };
-
-  if($('#wCopy')) $('#wCopy').onclick = async () => {
-    try{
-      await navigator.clipboard.writeText($('#wUrl').textContent.trim());
-      $('#wCopy').textContent = 'Copied';
-      setTimeout(() => { if($('#wCopy')) $('#wCopy').textContent = 'Copy'; }, 1500);
-    }catch(e){ showErr('Could not copy - select the URL and copy it by hand.'); }
-  };
-
-  if($('#wSave')) $('#wSave').onclick = async () => {
-    const idEl = $('#wId');
-    const id = idEl ? (idEl.value || '').trim() : '';
-    const secret = ($('#wSecret').value || '').trim();
-    if(!secret){ showErr('Paste the Client Secret from AniList first.'); $('#wSecret').focus(); return; }
-    showErr('');
-    const body = {anilistClientSecret: secret};
-    if(id) body.anilistClientId = id;
+  if($('#wSaveId')) $('#wSaveId').onclick = async () => {
+    const id = ($('#wId').value || '').trim();
+    if(!id) return;
     await fetch('/api/settings', {method:'POST',headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(body)});
-    startLink();
+      body: JSON.stringify({anilistClientId: id})});
+    showErr('Saved.');
+  };
+
+  if($('#wPasteGo')) $('#wPasteGo').onclick = async () => {
+    const v = ($('#wPaste').value || '').trim();
+    if(!v){ $('#wPaste').focus(); return; }
+    const r = await (await fetch('/api/account/code', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({code: v})})).json();
+    if(r.ok) showSettings();
+    else showErr(r.error || 'That was not accepted.');
   };
 
   async function startLink(){
     let r = {};
     try{ r = await (await fetch('/api/account/login',{method:'POST'})).json(); }catch(e){}
     if(!r.ok){ showErr(r.error || 'Could not start linking.'); return; }
-    showErr('Approve Tsuzuki in the browser tab that opened.');
-    // If the redirect points somewhere we cannot listen on, the code never
-    // reaches us - so offer a way to hand it over rather than polling to a
-    // timeout and blaming the user's configuration.
-    const box = $('#aErr');
-    if(box && !$('#wPaste')){
-      const row = document.createElement('div');
-      row.className = 'copyrow';
-      row.style.margin = '8px 0 0';
-      row.innerHTML = '<input id="wPaste" placeholder="Landed on a page that is not Tsuzuki? Paste that URL here" autocomplete="off">'+
-                      '<button class="small" id="wPasteGo">Finish</button>';
-      box.appendChild(row);
-      $('#wPasteGo').onclick = async () => {
-        const v = ($('#wPaste').value || '').trim();
-        if(!v){ $('#wPaste').focus(); return; }
-        const r = await (await fetch('/api/account/code', {method:'POST',
-          headers:{'Content-Type':'application/json'}, body: JSON.stringify({code: v})})).json();
-        if(r.ok) showSettings();
-        else showErr(r.error || 'That code was not accepted.');
-      };
-    }
+    showErr(r.inApp ? 'Sign in to AniList in the window that just opened.'
+                    : 'Approve Tsuzuki in the browser tab that opened.');
     let tries = 0;
     const timer = setInterval(async () => {
       let a = {};
       try{ a = await (await fetch('/api/account')).json(); }catch(e){}
       if(a.linked){ clearInterval(timer); showSettings(); return; }
-      if(++tries > 60){
-        clearInterval(timer);
-        showErr('Never heard back. Check the Redirect URL on the AniList client matches exactly.');
-      }
+      if(++tries > 90){ clearInterval(timer); showErr('Gave up waiting. Press Link AniList to try again.'); }
     }, 2000);
   }
 
   if($('#aIn')) $('#aIn').onclick = async () => {
-    if($('#wSecret') && !$('#wSecret').value.trim()){
-      showErr('Paste your AniList Client Secret below, then press Link.');
-      $('#wSecret').focus();
-      return;
-    }
     startLink();
   };
 
