@@ -84,6 +84,11 @@ Requires vcpkg with `VCPKG_ROOT` set; dependencies come from `vcpkg.json`.
 
 ## Usage
 
+Use `tsuzuki.cmd` in the repo root - the exe needs the DLLs beside it in
+`buildRelease`, so it is portable as a folder, not as a lone file. The
+launcher defaults `--save-path` to `%TEMP%	suzuki`; downloads are removed
+after playback unless you pass `--keep`.
+
 ```
 tsuzuki search "frieren" --res 1080            # search every source, pick one
 tsuzuki search "frieren" --episode 5           # ...and jump straight to ep 5

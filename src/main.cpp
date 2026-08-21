@@ -45,7 +45,9 @@ std::optional<Args> parseArgs(int argc, char** argv) {
     Args a;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
-        if (arg == "search" && i == 1) {
+        // "search" is the first non-flag argument, wherever it lands - the
+        // launcher script prepends --save-path, so it is not always argv[1].
+        if (arg == "search" && a.mode == "play" && a.uri.empty()) {
             a.mode = "search";
         } else if (arg == "--episode" && i + 1 < argc) {
             a.episode = std::atoi(argv[++i]);
@@ -115,6 +117,33 @@ const char* accuracyLabel(tsuzuki::sources::Accuracy a) {
 
 /* ------------------------------------------------------------ M2: search */
 
+// True when a title plausibly IS what the user typed, ignoring case,
+// punctuation and spacing - so "spy x family" matches "Spy x Family" but not
+// "Spy Kyoushitsu".
+std::string squash(const std::string& s) {
+    std::string out;
+    for (const unsigned char c : s) {
+        if (std::isalnum(c)) out.push_back(static_cast<char>(std::tolower(c)));
+    }
+    return out;
+}
+
+bool looksLikeMatch(const std::string& typed, const tsuzuki::anilist::Media& m) {
+    const std::string want = squash(typed);
+    if (want.empty()) return false;
+    for (const std::string& candidate :
+         {m.romaji, m.english, m.native, m.preferred}) {
+        const std::string have = squash(candidate);
+        if (have.empty()) continue;
+        if (have == want || have.find(want) != std::string::npos) return true;
+    }
+    for (const std::string& syn : m.synonyms) {
+        const std::string have = squash(syn);
+        if (!have.empty() && have.find(want) != std::string::npos) return true;
+    }
+    return false;
+}
+
 // Returns a chosen magnet, or empty when the user backs out.
 std::string runSearch(const Args& args) {
     namespace src = tsuzuki::sources;
@@ -128,7 +157,35 @@ std::string runSearch(const Args& args) {
     // SeaDex is keyed by.
     const auto matches = tsuzuki::anilist::search(args.uri);
     if (!matches.empty()) {
-        const auto& m = matches.front();
+        std::size_t pick = 0;
+
+        // AniList's top hit is not always right - "spy x family" returns
+        // "Spy Kyoushitsu" first. Accepting it silently would repeat, one
+        // layer up, exactly the mistake this tool exists to avoid. So confirm
+        // whenever the top hit does not obviously match what was typed.
+        if (matches.size() > 1 && !looksLikeMatch(args.uri, matches.front())) {
+            std::cout << "\nanilist: \"" << args.uri
+                      << "\" is ambiguous - which did you mean?\n\n";
+            for (std::size_t i = 0; i < matches.size(); ++i) {
+                const auto& m = matches[i];
+                std::printf("  %zu  %-46s %s%s\n", i, m.preferred.c_str(),
+                            m.year ? (std::to_string(m.year) + " ").c_str() : "",
+                            m.episodes ? (std::to_string(m.episodes) + " eps").c_str()
+                                       : "ongoing");
+            }
+            std::cout << "\npick a # [0]: " << std::flush;
+            std::string line;
+            std::getline(std::cin >> std::ws, line);
+            if (!line.empty()) {
+                const int idx = std::atoi(line.c_str());
+                if (idx >= 0 && idx < static_cast<int>(matches.size())) {
+                    pick = static_cast<std::size_t>(idx);
+                }
+            }
+            std::cout << "\n";
+        }
+
+        const auto& m = matches[pick];
         q.title = m.preferred.empty() ? args.uri : m.preferred;
         q.anilistId = m.id;
         for (const auto& s : m.synonyms) q.altTitles.push_back(s);
