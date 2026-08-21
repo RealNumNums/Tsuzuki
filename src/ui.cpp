@@ -1110,6 +1110,54 @@ static void installRoutes(httplib::Server& server, Engine& e) {
         res.set_content("{\"ok\":true}", "application/json");
     });
 
+    server.Get("/api/browse", [](const httplib::Request& req, httplib::Response& res) {
+        anilist::BrowseFilters f;
+        const Settings cfg = currentSettings();
+        f.allowAdult = cfg.showAdult;
+        if (req.has_param("q")) f.search = req.get_param_value("q");
+        if (req.has_param("genre")) f.genre = req.get_param_value("genre");
+        if (req.has_param("season")) f.season = req.get_param_value("season");
+        if (req.has_param("format")) f.format = req.get_param_value("format");
+        if (req.has_param("status")) f.status = req.get_param_value("status");
+        if (req.has_param("sort")) f.sort = req.get_param_value("sort");
+        if (req.has_param("year")) f.year = std::atoi(req.get_param_value("year").c_str());
+        if (req.has_param("page")) f.page = std::atoi(req.get_param_value("page").c_str());
+
+        json out = json::array();
+        for (const auto& b : anilist::browse(f)) {
+            out.push_back({{"id", b.id},
+                           {"title", b.title},
+                           {"cover", b.cover},
+                           {"color", b.color},
+                           {"episodes", b.episodes},
+                           {"year", b.year},
+                           {"score", b.score},
+                           {"format", b.format},
+                           {"status", b.status},
+                           {"genres", b.genres}});
+        }
+        res.set_content(out.dump(), "application/json");
+    });
+
+    server.Get("/api/airing", [](const httplib::Request& req, httplib::Response& res) {
+        const int days = req.has_param("days")
+                             ? std::atoi(req.get_param_value("days").c_str()) : 7;
+        json out = json::array();
+        for (const auto& a : anilist::airing(days > 0 ? days : 7)) {
+            out.push_back({{"mediaId", a.mediaId},
+                           {"episode", a.episode},
+                           {"airingAt", a.airingAt},
+                           {"title", a.title},
+                           {"cover", a.cover},
+                           {"color", a.color}});
+        }
+        res.set_content(out.dump(), "application/json");
+    });
+
+    server.Get("/api/genres", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(json(anilist::genres()).dump(), "application/json");
+    });
+
     server.Get("/api/lists", [](const httplib::Request&, httplib::Response& res) {
         json out = json::array();
         for (const auto& e : track::lists()) {

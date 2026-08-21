@@ -226,6 +226,21 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
   }
   .tile .prog{position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(0,0,0,.5)}
   .tile .prog i{display:block;height:100%;background:var(--accent)}
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+  .filters select,.filters input{padding:9px 11px;font-size:13px}
+  .filters .yr{width:96px}
+  .nav{display:flex;gap:4px;margin-left:auto;align-items:center}
+  .nav button{
+    background:transparent;border:1px solid transparent;color:var(--dim);
+    font-weight:500;padding:9px 14px;
+  }
+  .nav button:hover{color:var(--ink)}
+  .nav button.on{color:var(--ink);border-color:var(--line);background:var(--panel)}
+  .meta{color:var(--dim);font-size:11.5px;margin-top:3px}
+  .when{
+    position:absolute;top:8px;left:8px;background:rgba(0,0,0,.72);
+    border-radius:6px;padding:4px 7px;font:600 11px/1 "Segoe UI",sans-serif;color:#fff;
+  }
   .tile .name{
     margin-top:7px;font-size:12.5px;line-height:1.35;color:var(--ink);
     display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
@@ -336,7 +351,12 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
     <circle cx="82" cy="64" r="5.5" fill="#5BE9E9"/><circle cx="96" cy="64" r="5.5" fill="#5BE9E9" opacity=".72"/><circle cx="110" cy="64" r="5.5" fill="#5BE9E9" opacity=".45"/>
   </svg>
   <h1>Tsuzuki <span>&#32154;&#12365; &middot; to be continued</span></h1>
-  <button class="gear" id="gear">Settings</button>
+  <div class="nav">
+    <button id="navHome">Home</button>
+    <button id="navBrowse">Browse</button>
+    <button id="navSchedule">Schedule</button>
+    <button class="gear" id="gear">Settings</button>
+  </div>
 </header>
 
 <main>
@@ -566,6 +586,147 @@ $('#q').addEventListener('keydown', e => { if(e.key==='Enter') search(); });
 
 )HTMLPAGE"
     R"HTMLPAGE(
+)HTMLPAGE"
+    R"HTMLPAGE(
+/* ------------------------------------------------------------- browse */
+
+const SEASONS = [['','Any season'],['WINTER','Winter'],['SPRING','Spring'],['SUMMER','Summer'],['FALL','Fall']];
+const FORMATS = [['','Any format'],['TV','TV'],['MOVIE','Movie'],['OVA','OVA'],['ONA','ONA'],['SPECIAL','Special']];
+const STATUSES = [['','Any status'],['RELEASING','Airing'],['FINISHED','Finished'],['NOT_YET_RELEASED','Upcoming']];
+const SORTS = [['POPULARITY_DESC','Most popular'],['SCORE_DESC','Highest rated'],['TRENDING_DESC','Trending'],['START_DATE_DESC','Newest']];
+
+let browseState = {genre:'', season:'', year:'', format:'', status:'', sort:'POPULARITY_DESC'};
+
+function selectEl(id, options, current){
+  return '<select id="'+id+'">' + options.map(([v,l]) =>
+    '<option value="'+esc(v)+'"'+(current===v?' selected':'')+'>'+esc(l)+'</option>').join('') + '</select>';
+}
+
+function tileFor(b){
+  const art = b.cover ? 'background-image:url('+esc(b.cover)+')' : '';
+  const bits = [];
+  if(b.format) bits.push(b.format);
+  if(b.year) bits.push(b.year);
+  if(b.episodes) bits.push(b.episodes+' eps');
+  if(b.score) bits.push(b.score+'%');
+  return '<div class="tile" data-title="'+esc(b.title)+'" data-ep="1"'+
+      (b.color ? ' data-color="'+esc(b.color)+'"' : '')+'>'+
+    '<div class="art" style="'+art+'"></div>'+
+    '<div class="name">'+esc(b.title)+'</div>'+
+    '<div class="meta">'+esc(bits.join(' · '))+'</div></div>';
+}
+
+async function showBrowse(){
+  setNav('navBrowse');
+  let genres = [];
+  try{ genres = await (await fetch('/api/genres')).json(); }catch(e){}
+
+  const genreOpts = [['','Any genre']].concat((genres||[]).map(g => [g,g]));
+  const years = [['','Any year']];
+  const thisYear = new Date().getFullYear();
+  for(let y = thisYear + 1; y >= 1990; y--) years.push([String(y), String(y)]);
+
+  out.innerHTML =
+    '<div class="filters">'+
+      selectEl('fGenre', genreOpts, browseState.genre)+
+      selectEl('fSeason', SEASONS, browseState.season)+
+      selectEl('fYear', years, browseState.year)+
+      selectEl('fFormat', FORMATS, browseState.format)+
+      selectEl('fStatus', STATUSES, browseState.status)+
+      selectEl('fSort', SORTS, browseState.sort)+
+    '</div><div id="browseOut"></div>';
+
+  ['fGenre','fSeason','fYear','fFormat','fStatus','fSort'].forEach(id => {
+    $('#'+id).onchange = () => {
+      browseState = {
+        genre: $('#fGenre').value, season: $('#fSeason').value, year: $('#fYear').value,
+        format: $('#fFormat').value, status: $('#fStatus').value, sort: $('#fSort').value,
+      };
+      runBrowse();
+    };
+  });
+  runBrowse();
+}
+
+async function runBrowse(){
+  const box = $('#browseOut');
+  if(!box) return;
+  box.innerHTML = '<div class="empty"><span class="spinner"></span>Looking...</div>';
+
+  const qs = new URLSearchParams();
+  for(const [k,v] of Object.entries(browseState)) if(v) qs.set(k === 'genre' ? 'genre' : k, v);
+
+  let items = [];
+  try{ items = await (await fetch('/api/browse?'+qs.toString())).json(); }catch(e){}
+  if(!Array.isArray(items) || !items.length){
+    box.innerHTML = '<div class="empty"><p>Nothing matches those filters.</p></div>';
+    return;
+  }
+  box.innerHTML = '<div class="grid">' + items.map(tileFor).join('') + '</div>';
+  wireTiles();
+}
+
+/* ----------------------------------------------------------- schedule */
+
+)HTMLPAGE"
+    R"HTMLPAGE(async function showSchedule(){
+  setNav('navSchedule');
+  out.innerHTML = '<div class="empty"><span class="spinner"></span>Loading the schedule...</div>';
+
+  let items = [];
+  try{ items = await (await fetch('/api/airing?days=7')).json(); }catch(e){}
+  if(!Array.isArray(items) || !items.length){
+    out.innerHTML = '<div class="empty"><p>Nothing scheduled in the next week.</p></div>';
+    return;
+  }
+
+  // Group by day so the week reads as a week.
+  const days = {};
+  for(const a of items){
+    const d = new Date(a.airingAt * 1000);
+    const key = d.toDateString();
+    (days[key] = days[key] || []).push(a);
+  }
+
+  let html = '';
+  for(const [day, list] of Object.entries(days)){
+    const when = new Date(list[0].airingAt * 1000);
+    const label = when.toLocaleDateString(undefined, {weekday:'long', month:'short', day:'numeric'});
+    html += '<div class="sect"><h3>'+esc(label)+'</h3><span>'+list.length+' episodes</span></div><div class="grid">';
+    for(const a of list){
+      const art = a.cover ? 'background-image:url('+esc(a.cover)+')' : '';
+      const t = new Date(a.airingAt * 1000).toLocaleTimeString(undefined, {hour:'numeric', minute:'2-digit'});
+      html += '<div class="tile" data-title="'+esc(a.title)+'" data-ep="'+a.episode+'"'+
+          (a.color ? ' data-color="'+esc(a.color)+'"' : '')+'>'+
+        '<div class="art" style="'+art+'">'+
+          '<div class="when">'+esc(t)+'</div>'+
+          '<div class="next">Episode '+a.episode+'</div>'+
+        '</div><div class="name">'+esc(a.title)+'</div></div>';
+    }
+    html += '</div>';
+  }
+  out.innerHTML = html;
+  wireTiles();
+}
+
+function wireTiles(){
+  document.querySelectorAll('.tile').forEach(t => {
+    t.onclick = () => {
+      if(t.dataset.color) document.documentElement.style.setProperty('--accent', t.dataset.color);
+      $('#q').value = t.dataset.title;
+      $('#ep').value = t.dataset.ep || '';
+      search();
+    };
+  });
+}
+
+function setNav(id){
+  ['navHome','navBrowse','navSchedule'].forEach(n => {
+    const el = $('#'+n);
+    if(el) el.classList.toggle('on', n === id);
+  });
+}
+
 /* ------------------------------------------------------- home + history */
 
 function goHome(){
@@ -630,17 +791,11 @@ async function showHome(){
   }
 
   out.innerHTML = html;
+  setNav('navHome');
 
   // A tile is "find this episode and play it" - the title and the next
   // unwatched number both come from the list, so nothing has to be typed.
-  document.querySelectorAll('.tile').forEach(t => {
-    t.onclick = () => {
-      if(t.dataset.color) document.documentElement.style.setProperty('--accent', t.dataset.color);
-      $('#q').value = t.dataset.title;
-      $('#ep').value = t.dataset.ep;
-      search();
-    };
-  });
+  wireTiles();
 
   document.querySelectorAll('.ep.hist').forEach(c => {
     c.onclick = () => {
@@ -947,6 +1102,9 @@ function applyTheme(name){
 
 $('#gear').onclick = (e) => { e.stopPropagation(); showSettings(); };
 $('#home').onclick = goHome;
+$('#navHome').onclick = goHome;
+$('#navBrowse').onclick = showBrowse;
+$('#navSchedule').onclick = showSchedule;
 
 const MASCOT = `)HTMLPAGE"
     R"HTMLPAGE(<svg viewBox="0 0 200 250" xmlns="http://www.w3.org/2000/svg"><defs>

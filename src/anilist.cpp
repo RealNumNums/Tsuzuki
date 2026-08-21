@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cctype>
+#include <ctime>
 
 #include "http.hpp"
 
@@ -191,6 +192,178 @@ bool details(int id, Details& out) {
         out.episodeInfo.push_back(std::move(info));
     }
     return true;
+}
+
+namespace {
+
+constexpr const char* kAiringQuery = R"(
+query ($from: Int, $to: Int) {
+  Page(page: 1, perPage: 50) {
+    airingSchedules(airingAt_greater: $from, airingAt_lesser: $to, sort: TIME) {
+      episode
+      airingAt
+      media {
+        id
+        title { romaji english }
+        coverImage { large color }
+        isAdult
+      }
+    }
+  }
+}
+)";
+
+int intOr(const json& v, int fallback) {
+    return v.is_number_integer() ? v.get<int>() : fallback;
+}
+
+}  // namespace
+
+std::vector<BrowseItem> browse(const BrowseFilters& f) {
+    std::vector<BrowseItem> out;
+
+    // Unset filters are omitted from the query rather than passed as null.
+    // AniList reads a null `status` as "status IS NULL" and returns nothing,
+    // which silently emptied every browse that did not filter by status.
+    std::string decls = "$page: Int, $sort: [MediaSort]";
+    std::string args = "type: ANIME, sort: $sort";
+
+    json vars;
+    vars["page"] = f.page < 1 ? 1 : f.page;
+    vars["sort"] = json::array({f.sort.empty() ? "POPULARITY_DESC" : f.sort});
+
+    const auto add = [&](const char* decl, const char* arg, const char* var,
+                         const json& value) {
+        decls += ", ";
+        decls += decl;
+        args += ", ";
+        args += arg;
+        vars[var] = value;
+    };
+
+    if (!f.search.empty()) add("$search: String", "search: $search", "search", f.search);
+    if (!f.genre.empty()) add("$genre: String", "genre: $genre", "genre", f.genre);
+    if (!f.season.empty()) add("$season: MediaSeason", "season: $season", "season", f.season);
+    if (!f.format.empty()) add("$format: MediaFormat", "format: $format", "format", f.format);
+    if (!f.status.empty()) add("$status: MediaStatus", "status: $status", "status", f.status);
+    if (f.year > 0) add("$year: Int", "seasonYear: $year", "year", f.year);
+    if (!f.allowAdult) add("$adult: Boolean", "isAdult: $adult", "adult", false);
+
+    const std::string gql =
+        "query (" + decls + ") {"
+        "  Page(page: $page, perPage: 30) {"
+        "    media(" + args + ") {"
+        "      id episodes format status seasonYear averageScore genres"
+        "      title { romaji english }"
+        "      coverImage { large color }"
+        "    }"
+        "  }"
+        "}";
+
+    json body;
+    body["query"] = gql;
+    body["variables"] = vars;
+
+    const auto res = http::postJson(kEndpoint, body.dump());
+    if (!res.ok) return out;
+
+    json j;
+    try {
+        j = json::parse(res.body);
+    } catch (const std::exception&) {
+        return out;
+    }
+    if (!j.is_object() || !j.contains("data") || !j["data"].is_object()) return out;
+    const json& data = j["data"];
+    if (!data.contains("Page") || !data["Page"].is_object()) return out;
+
+    for (const auto& m : data["Page"].value("media", json::array())) {
+        if (!m.is_object()) continue;
+        BrowseItem b;
+        b.id = intOr(m.contains("id") ? m["id"] : json(), 0);
+        if (!b.id) continue;
+        b.episodes = intOr(m.contains("episodes") ? m["episodes"] : json(), 0);
+        b.year = intOr(m.contains("seasonYear") ? m["seasonYear"] : json(), 0);
+        b.score = intOr(m.contains("averageScore") ? m["averageScore"] : json(), 0);
+        b.format = pick(m, "format");
+        b.status = pick(m, "status");
+
+        const json t = m.value("title", json::object());
+        b.title = pick(t, "romaji");
+        if (b.title.empty()) b.title = pick(t, "english");
+
+        const json ci = m.value("coverImage", json::object());
+        b.cover = pick(ci, "large");
+        b.color = pick(ci, "color");
+
+        for (const auto& g : m.value("genres", json::array())) {
+            if (g.is_string()) b.genres.push_back(g.get<std::string>());
+        }
+        out.push_back(std::move(b));
+    }
+    return out;
+}
+
+std::vector<AiringItem> airing(int days) {
+    std::vector<AiringItem> out;
+
+    const long long now = static_cast<long long>(std::time(nullptr));
+    json vars;
+    vars["from"] = now;
+    vars["to"] = now + static_cast<long long>(days) * 86400;
+
+    json body;
+    body["query"] = kAiringQuery;
+    body["variables"] = vars;
+
+    const auto res = http::postJson(kEndpoint, body.dump());
+    if (!res.ok) return out;
+
+    json j;
+    try {
+        j = json::parse(res.body);
+    } catch (const std::exception&) {
+        return out;
+    }
+    if (!j.is_object() || !j.contains("data") || !j["data"].is_object()) return out;
+    const json& data = j["data"];
+    if (!data.contains("Page") || !data["Page"].is_object()) return out;
+
+    for (const auto& a : data["Page"].value("airingSchedules", json::array())) {
+        if (!a.is_object()) continue;
+        const json m = a.value("media", json::object());
+        if (!m.is_object()) continue;
+        if (m.contains("isAdult") && m["isAdult"].is_boolean() && m["isAdult"].get<bool>()) {
+            continue;
+        }
+
+        AiringItem it;
+        it.mediaId = intOr(m.contains("id") ? m["id"] : json(), 0);
+        if (!it.mediaId) continue;
+        it.episode = intOr(a.contains("episode") ? a["episode"] : json(), 0);
+        it.airingAt = a.contains("airingAt") && a["airingAt"].is_number()
+                          ? a["airingAt"].get<long long>() : 0;
+
+        const json t = m.value("title", json::object());
+        it.title = pick(t, "romaji");
+        if (it.title.empty()) it.title = pick(t, "english");
+
+        const json ci = m.value("coverImage", json::object());
+        it.cover = pick(ci, "large");
+        it.color = pick(ci, "color");
+
+        out.push_back(std::move(it));
+    }
+    return out;
+}
+
+std::vector<std::string> genres() {
+    // AniList's genre set is fixed and small; asking for it every time would
+    // be a round trip for a list that has not changed in years.
+    return {"Action", "Adventure", "Comedy", "Drama", "Ecchi", "Fantasy",
+            "Horror", "Mahou Shoujo", "Mecha", "Music", "Mystery", "Psychological",
+            "Romance", "Sci-Fi", "Slice of Life", "Sports", "Supernatural",
+            "Thriller"};
 }
 
 }  // namespace tsuzuki::anilist

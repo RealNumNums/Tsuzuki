@@ -48,4 +48,48 @@ struct Details {
 
 bool details(int id, Details& out);
 
+// ---- discovery ------------------------------------------------------
+
+struct BrowseFilters {
+    std::string search;
+    std::string genre;
+    std::string season;   // WINTER / SPRING / SUMMER / FALL
+    std::string format;   // TV / MOVIE / OVA / ONA / SPECIAL
+    std::string status;   // RELEASING / FINISHED / NOT_YET_RELEASED
+    std::string sort = "POPULARITY_DESC";
+    int year = 0;
+    int page = 1;
+    bool allowAdult = false;
+};
+
+struct BrowseItem {
+    int id = 0;
+    int episodes = 0;
+    int year = 0;
+    int score = 0;        // averageScore, 0 when unrated
+    std::string title;
+    std::string cover;
+    std::string color;
+    std::string format;
+    std::string status;
+    std::vector<std::string> genres;
+};
+
+std::vector<BrowseItem> browse(const BrowseFilters& f);
+
+// Episodes airing in the next `days` days, soonest first.
+struct AiringItem {
+    int mediaId = 0;
+    int episode = 0;
+    long long airingAt = 0;   // unix seconds
+    std::string title;
+    std::string cover;
+    std::string color;
+};
+
+std::vector<AiringItem> airing(int days = 7);
+
+// The genres AniList knows about, for the filter menu.
+std::vector<std::string> genres();
+
 }  // namespace tsuzuki::anilist
