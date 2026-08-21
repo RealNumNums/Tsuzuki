@@ -435,6 +435,27 @@ bool openTorrent(Engine& e, const std::string& magnet, std::string& err) {
     e.anilistId = 0;
     e.runtimeMinutes = 0;
 
+    // Work out which show this is from the release name, rather than relying
+    // on the page to have carried an id here. Opening from history, or from a
+    // pasted magnet, used to leave anilistId at 0 - which silently disabled
+    // both progress sync and per-show resume.
+    {
+        std::string guess;
+        for (const auto& f : e.files) {
+            if (!f.excluded && !f.title.empty()) {
+                guess = f.title;
+                break;
+            }
+        }
+        if (!guess.empty()) {
+            const auto matches = anilist::search(guess);
+            if (!matches.empty()) {
+                e.anilistId = matches.front().id;
+                e.showTitle = matches.front().preferred;
+            }
+        }
+    }
+
     if (e.files.empty()) {
         err = "No video files in this torrent.";
         return false;
@@ -725,7 +746,13 @@ void playFile(Engine& e, int index) {
 
     // Only count it as watched past 80%. Opening an episode and bailing after
     // two minutes should not mark it done on someone's list.
-    const bool finished = lastDuration > 0 && (lastPosition / lastDuration) >= 0.9;
+    // hayase-app/interface player.svelte: fromend = max(180, duration/10), and
+    // anything past that counts as watched. Better than a flat percentage -
+    // it means skipping the ending still finishes the episode.
+    const double fromEnd = lastDuration > 0
+                               ? std::max(180.0, lastDuration / 10.0)
+                               : 0.0;
+    const bool finished = lastDuration > 0 && (lastDuration - fromEnd) < lastPosition;
     if (finished) {
         progress::clear(progressKey);
     } else if (lastDuration > 0) {
@@ -739,11 +766,12 @@ void playFile(Engine& e, int index) {
     }
 
     const int watchedEpisode = watchedEp;
-    if (cfg.syncProgress && e.anilistId > 0 && watchedEpisode > 0 &&
-        lastDuration > 0 && (lastPosition / lastDuration) >= 0.8) {
+    if (cfg.syncProgress && e.anilistId > 0 && watchedEpisode > 0 && finished) {
         e.setMessage("Updating AniList...");
         if (track::updateProgress(e.anilistId, watchedEpisode)) {
             e.setMessage("AniList updated to episode " + std::to_string(watchedEpisode));
+        } else {
+            e.setMessage("Could not update AniList - is the account still linked?");
         }
     }
 
@@ -943,9 +971,13 @@ static void installRoutes(httplib::Server& server, Engine& e) {
         }
 
         // Artwork and blurb, so the file list is not a bare filename dump.
-        if (in.contains("anilistId") && in["anilistId"].is_number_integer()) {
+        const int wantId = in.contains("anilistId") && in["anilistId"].is_number_integer() &&
+                                   in["anilistId"].get<int>() > 0
+                               ? in["anilistId"].get<int>()
+                               : e.anilistId;
+        if (wantId > 0) {
             anilist::Details d;
-            if (anilist::details(in["anilistId"].get<int>(), d)) {
+            if (anilist::details(wantId, d)) {
                 reply["show"] = {
                     {"title", d.title},       {"description", d.description},
                     {"cover", d.coverImage},  {"banner", d.bannerImage},
