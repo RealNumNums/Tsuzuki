@@ -31,7 +31,6 @@
 #endif
 
 #include "anilist.hpp"
-#include "ui.hpp"
 #include "scan.hpp"
 #include "sources/source.hpp"
 
@@ -80,9 +79,6 @@ std::optional<Args> parseArgs(int argc, char** argv) {
         // launcher script prepends --save-path, so it is not always argv[1].
         if (arg == "search" && a.mode == "play" && a.uri.empty()) {
             a.mode = "search";
-        } else if (arg == "ui" && a.mode == "play" && a.uri.empty()) {
-            a.mode = "ui";
-            a.uri = "ui";
         } else if (arg == "--episode" && i + 1 < argc) {
             a.episode = std::atoi(argv[++i]);
         } else if (arg == "--res" && i + 1 < argc) {
@@ -335,15 +331,6 @@ int main(int argc, char** argv) {
     if (!args) {
         usage();
         return 1;
-    }
-
-    if (args->mode == "ui") {
-        keepOpen.active = false;  // the server prints its own URL and blocks
-        std::string path = args->savePath;
-        if (path == "downloads") {
-            if (const char* tmp = std::getenv("TEMP")) path = std::string(tmp) + "\\tsuzuki";
-        }
-        return tsuzuki::ui::run(7654, path);
     }
 
     if (args->mode == "search") {

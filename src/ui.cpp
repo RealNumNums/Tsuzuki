@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <ctime>
 #include <fstream>
 #include <memory>
 #include <mutex>
@@ -69,8 +70,15 @@ struct Engine {
     std::vector<ScannedFile> files;
 
     int runtimeMinutes = 0;   // from AniList, for bitrate estimation
+    int anilistId = 0;
+    std::string showTitle;
+    std::string showCover;
 
     std::atomic<bool> playing{false};
+    // True only while mpv is actually on screen. The page uses this to
+    // switch to the control strip - keying off `playing` meant it did so
+    // during buffering, while the window was still full-size.
+    std::atomic<bool> videoActive{false};
     std::atomic<bool> stopRequested{false};
     std::atomic<bool> done{true};
     std::atomic<int> progress{0};
@@ -158,6 +166,44 @@ void saveSettings() {
 Settings currentSettings() {
     std::lock_guard<std::mutex> lock(g_settingsMutex);
     return g_settings;
+}
+
+std::string historyPath() {
+    const char* base = std::getenv("LOCALAPPDATA");
+    std::string dir = base ? std::string(base) + "\\Tsuzuki" : std::string(".");
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    return dir + "\\history.json";
+}
+
+json loadHistory() {
+    std::ifstream in(historyPath());
+    if (!in) return json::array();
+    try {
+        json j;
+        in >> j;
+        if (j.is_array()) return j;
+    } catch (const std::exception&) {
+    }
+    return json::array();
+}
+
+// Newest first, de-duplicated by magnet, capped so the file cannot grow
+// without bound.
+void rememberWatched(const json& entry) {
+    json list = loadHistory();
+    json next = json::array();
+    next.push_back(entry);
+    for (const auto& e : list) {
+        if (e.value("magnet", "") == entry.value("magnet", "") &&
+            e.value("file", "") == entry.value("file", "")) {
+            continue;
+        }
+        next.push_back(e);
+        if (next.size() >= 40) break;
+    }
+    std::ofstream out(historyPath());
+    if (out) out << next.dump(2) << "\n";
 }
 
 void* g_videoHost = nullptr;
@@ -262,6 +308,10 @@ bool openTorrent(Engine& e, const std::string& magnet, std::string& err) {
     }
     e.files = scanFiles(raw);
     e.openMagnet = magnet;
+    e.showTitle.clear();
+    e.showCover.clear();
+    e.anilistId = 0;
+    e.runtimeMinutes = 0;
 
     if (e.files.empty()) {
         err = "No video files in this torrent.";
@@ -411,6 +461,19 @@ void playFile(Engine& e, int index) {
     cmd += " --force-window=yes --cache=yes --demuxer-max-bytes=200MiB";
     cmd += " \"" + path + "\"";
 
+    {
+        json entry{{"magnet", e.openMagnet},
+                   {"file", chosen->name},
+                   {"torrent", e.info->name()},
+                   {"show", e.showTitle},
+                   {"cover", e.showCover},
+                   {"anilistId", e.anilistId},
+                   {"episode", chosen->episode.valid ? chosen->episode.from : 0},
+                   {"at", static_cast<long long>(std::time(nullptr))}};
+        rememberWatched(entry);
+    }
+
+    e.videoActive = true;
     if (g_playbackHook) g_playbackHook(true);
 
     // CreateProcess rather than system(): we need to stay alive alongside mpv
@@ -423,6 +486,7 @@ void playFile(Engine& e, int index) {
 
     if (!CreateProcessA(nullptr, mutableCmd.data(), nullptr, nullptr, FALSE, 0, nullptr,
                         nullptr, &si, &pi)) {
+        e.videoActive = false;
         if (g_playbackHook) g_playbackHook(false);
         e.setMessage("Could not start mpv. Is it installed?");
         e.done = true;
@@ -476,6 +540,7 @@ void playFile(Engine& e, int index) {
 
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+    e.videoActive = false;
     if (g_playbackHook) g_playbackHook(false);
 
     // Remove only the episode just watched, and keep the torrent open. Tearing
@@ -511,13 +576,6 @@ void playFile(Engine& e, int index) {
     e.playing = false;
 }
 
-void openBrowser(const std::string& url) {
-#ifdef _WIN32
-    ShellExecuteA(nullptr, "open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-#else
-    std::system(("xdg-open " + url).c_str());
-#endif
-}
 
 }  // namespace
 
@@ -641,6 +699,9 @@ static void installRoutes(httplib::Server& server, Engine& e) {
                 }
                 reply["episodeInfo"] = eps;
                 e.runtimeMinutes = d.duration;
+                e.anilistId = d.id;
+                e.showTitle = d.title;
+                e.showCover = d.coverImage;
             }
         }
 
@@ -699,6 +760,10 @@ static void installRoutes(httplib::Server& server, Engine& e) {
                 .detach();
         }
         res.set_content("{\"ok\":true}", "application/json");
+    });
+
+    server.Get("/api/history", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(loadHistory().dump(), "application/json");
     });
 
     server.Get("/api/settings", [&e](const httplib::Request&, httplib::Response& res) {
@@ -789,40 +854,10 @@ static void installRoutes(httplib::Server& server, Engine& e) {
             {"progress", e.progress.load()},
             {"done", e.done.load()},
             {"playing", e.playing.load()},
+            {"videoActive", e.videoActive.load()},
         };
         res.set_content(reply.dump(), "application/json");
     });
-}
-
-int run(int port, const std::string& savePath) {
-    Engine& e = engine();
-    e.savePath = savePath;
-    loadSettings();
-    {
-        const Settings cfg = currentSettings();
-        if (!cfg.savePath.empty()) e.savePath = cfg.savePath;
-        applySessionSettings(e, cfg);
-    }
-
-    httplib::Server server;
-    installRoutes(server, e);
-
-    const std::string url = "http://127.0.0.1:" + std::to_string(port) + "/";
-    std::cout << "\n  Tsuzuki UI running at " << url << "\n"
-              << "  Downloads: " << savePath << "\n"
-              << "  Close this window to stop.\n\n";
-
-    std::thread([url] {
-        std::this_thread::sleep_for(std::chrono::milliseconds(400));
-        openBrowser(url);
-    }).detach();
-
-    if (!server.listen("127.0.0.1", port)) {
-        std::cerr << "Could not bind port " << port
-                  << ". Is another copy already running?\n";
-        return 1;
-    }
-    return 0;
 }
 
 bool startBackground(int port, const std::string& savePath) {

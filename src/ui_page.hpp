@@ -28,6 +28,8 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
     background:rgba(14,13,23,.9);backdrop-filter:blur(10px);z-index:20;
   }
   header .logo{width:34px;height:34px;flex:none}
+  header h1,header .logo{cursor:pointer}
+  header h1:hover{color:var(--pink-soft)}
   header h1{font-size:18px;margin:0;letter-spacing:.3px}
   header h1 span{color:var(--dim);font-weight:400;font-size:12.5px;margin-left:8px}
   main{max-width:1100px;margin:0 auto;padding:22px 26px 60px}
@@ -197,7 +199,7 @@ inline constexpr const char* kIndexHtml = R"HTMLPAGE(<!doctype html>
 )HTMLPAGE"
     R"HTMLPAGE(</head>
 <body>
-<header>
+<header id="home" title="Back to the start">
   <svg class="logo" viewBox="0 0 128 128"><defs>
     <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#453A7A"/><stop offset="1" stop-color="#1B1B2F"/></linearGradient>
     <linearGradient id="la" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF8FB3"/><stop offset="1" stop-color="#FF5C8D"/></linearGradient>
@@ -393,7 +395,7 @@ function renderEpisodes(magnet, j){
           '<div class="note"><span id="stext">Starting...</span><div class="bar"><i id="sbar"></i></div></div></div>';
 
   out.innerHTML = html;
-  $('#back').onclick = () => { if(lastResults) renderResults(); else mascot('Search for something to watch.'); };
+  $('#back').onclick = () => { if(lastResults) renderResults(); else goHome(); };
   document.querySelectorAll('.ep button').forEach(b => b.onclick = () => play(magnet, parseInt(b.dataset.i,10)));
 }
 
@@ -421,6 +423,46 @@ $('#q').addEventListener('keydown', e => { if(e.key==='Enter') search(); });
 
 )HTMLPAGE"
     R"HTMLPAGE(
+/* ------------------------------------------------------- home + history */
+
+function goHome(){
+  lastResults = null;
+  showHome();
+}
+
+async function showHome(){
+  let hist = [];
+  try{ hist = await (await fetch('/api/history')).json(); }catch(e){}
+
+  if(!Array.isArray(hist) || !hist.length){
+    mascot('Search for something to watch.');
+    return;
+  }
+
+  let html = '<div class="hint">Continue watching</div><div class="eps">';
+  for(const h of hist.slice(0, 12)){
+    const ep = h.episode ? 'Episode ' + h.episode : (h.file || '');
+    const name = h.show || h.torrent || 'Unknown';
+    const thumb = h.cover ? 'background-image:url('+esc(h.cover)+');background-position:center 22%' : '';
+    html += '<div class="ep hist" data-magnet="'+esc(h.magnet)+'" data-al="'+(h.anilistId||0)+'" style="cursor:pointer">'+
+      '<div class="thumb" style="'+thumb+'"><span>'+esc(h.episode ? 'EP '+h.episode : '?')+'</span></div>'+
+      '<div class="body"><div class="name">'+esc(name)+'</div>'+
+      '<div class="file">'+esc(ep)+'</div>'+
+      '<div class="file">'+esc(h.torrent||'')+'</div></div>'+
+      '<div class="right"><button>Open</button></div></div>';
+  }
+  html += '</div>';
+  out.innerHTML = html;
+
+  document.querySelectorAll('.ep.hist').forEach(c => {
+    const go = () => {
+      lastAnilistId = parseInt(c.dataset.al, 10) || null;
+      openTorrent(c.dataset.magnet);
+    };
+    c.onclick = go;
+  });
+}
+
 /* ---------------------------------------------------------- player bar */
 
 const fmt = t => {
@@ -438,6 +480,18 @@ async function playerCmd(action, value){
   }catch(e){}
 }
 
+const LANG_NAMES = {
+  jpn:'Japanese', ja:'Japanese', jp:'Japanese',
+  eng:'English', en:'English',
+  spa:'Spanish', es:'Spanish', por:'Portuguese', pt:'Portuguese',
+  fre:'French', fra:'French', fr:'French',
+  ger:'German', deu:'German', de:'German',
+  ita:'Italian', it:'Italian', rus:'Russian', ru:'Russian',
+  chi:'Chinese', zho:'Chinese', zh:'Chinese',
+  kor:'Korean', ko:'Korean', ara:'Arabic', ar:'Arabic',
+};
+const langName = c => !c ? '' : (LANG_NAMES[String(c).toLowerCase()] || String(c).toUpperCase());
+
 function fillTracks(sel, tracks, type, noneLabel){
   const want = tracks.filter(t => t.type === type);
   const cur = want.find(t => t.selected);
@@ -450,16 +504,30 @@ function fillTracks(sel, tracks, type, noneLabel){
     o.value = '0'; o.textContent = noneLabel;
     sel.appendChild(o);
   }
-  for(const t of want){
+  // Two tracks both labelled "JA" tells you nothing, so fall back to the
+  // track title, then the codec, then the id until the labels differ.
+  const label = t => {
+    const bits = [];
+    if(t.lang) bits.push(langName(t.lang));
+    if(t.title) bits.push(t.title);
+    return bits.join(' - ') || (t.codec || ('Track ' + t.id));
+  };
+  const labels = want.map(label);
+  const finalLabels = labels.map((l, i) => {
+    if(labels.filter(x => x === l).length === 1) return l;
+    const t = want[i];
+    return l + (t.codec ? ' (' + t.codec + ')' : ' #' + t.id);
+  });
+  const seen = {};
+  want.forEach((t, i) => {
     const o = document.createElement('option');
     o.value = String(t.id);
-    const bits = [];
-    if(t.lang) bits.push(t.lang.toUpperCase());
-    if(t.title) bits.push(t.title);
-    if(!bits.length && t.codec) bits.push(t.codec);
-    o.textContent = bits.join(' - ') || ('Track ' + t.id);
+    let text = finalLabels[i];
+    if(seen[text]) text += ' #' + t.id;
+    seen[text] = true;
+    o.textContent = text;
     sel.appendChild(o);
-  }
+  });
   sel.value = cur ? String(cur.id) : '0';
 }
 
@@ -492,6 +560,7 @@ function exitPlayer(){
 }
 
 $('#pStop').onclick = () => { playerCmd('stop'); exitPlayer(); };
+// mascot() is the empty state; goHome() shows history when there is any.
 $('#pPlay').onclick = () => playerCmd('pause');
 $('#pBack').onclick = () => playerCmd('seek', -10);
 $('#pFwd').onclick  = () => playerCmd('seek', 30);
@@ -511,7 +580,7 @@ $('#vol').onchange = () => playerCmd('volume', parseInt($('#vol').value,10));
 setInterval(async () => {
   let s;
   try{ s = await (await fetch('/api/status')).json(); }catch(e){ return; }
-  if(s.playing){ enterPlayer(); refreshPlayer(); }
+  if(s.videoActive){ enterPlayer(); refreshPlayer(); }
   else { exitPlayer(); }
 }, 900);
 
@@ -557,7 +626,7 @@ async function showSettings(){
   html += '</div><div class="hint" id="sSaved" style="margin-top:12px"></div>';
   out.innerHTML = html;
 
-  $('#sBack').onclick = () => mascot('Search for something to watch.');
+  $('#sBack').onclick = goHome;
   const save = async () => {
     const next = {};
     document.querySelectorAll('[data-k]').forEach(el => {
@@ -577,7 +646,8 @@ async function showSettings(){
     el.onchange = save);
 }
 
-$('#gear').onclick = showSettings;
+$('#gear').onclick = (e) => { e.stopPropagation(); showSettings(); };
+$('#home').onclick = goHome;
 
 const MASCOT = `)HTMLPAGE"
     R"HTMLPAGE(<svg viewBox="0 0 200 250" xmlns="http://www.w3.org/2000/svg"><defs>
@@ -618,7 +688,7 @@ if(params.get('settings')){
   if(params.get('res')) $('#res').value = params.get('res');
   search();
 } else {
-  mascot('Search for something to watch.');
+  goHome();
 }
 </script>
 </body>

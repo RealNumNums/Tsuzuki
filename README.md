@@ -48,7 +48,7 @@ is reported, not papered over.
 | Torrent | libtorrent-rasterbar |
 | Filename parsing | Anitomy (native C++, vendored via FetchContent) |
 | HTTP / JSON / XML | libcurl, nlohmann-json, pugixml |
-| UI | Win32 + WebView2 (`Tsuzuki.exe`); HTML via cpp-httplib on loopback |
+| UI | Win32 + WebView2 (`Tsuzuki.exe`); loopback server is internal transport only |
 | Playback | mpv in-window (--wid), driven over its JSON IPC socket |
 | Build | CMake + vcpkg manifest mode, MSVC |
 
@@ -94,7 +94,6 @@ so this is portable as a folder, not as a lone file. Downloads default to
 
 ```
 Tsuzuki.exe                                   # native app window
-tsuzuki-cli ui                                # same UI, in your browser
 tsuzuki-cli search "frieren" --res 1080            # search every source, pick one
 tsuzuki-cli search "frieren" --episode 5           # ...and jump straight to ep 5
 tsuzuki-cli "magnet:?xt=urn:btih:..."              # show the table, pick a file
