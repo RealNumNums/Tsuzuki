@@ -42,6 +42,7 @@
 #include "http.hpp"
 #include "player.hpp"
 #include "scan.hpp"
+#include "stream.hpp"
 #include "sources/source.hpp"
 #include "discord.hpp"
 #include "track.hpp"
@@ -516,6 +517,18 @@ void playFile(Engine& e, int index) {
     }
     e.handle.file_priority(lt::file_index_t{chosen->index}, lt::top_priority);
     e.handle.unset_flags(lt::torrent_flags::upload_mode);
+    // Sequential download is load-bearing, and not only as an optimisation.
+    //
+    // file_priority() is applied on libtorrent's own thread, and applying it
+    // recomputes the piece priorities for that file - wiping any per-piece
+    // priority set in the window between the call and it taking effect, which
+    // is exactly where the priming priorities below are set. Sequential order
+    // is what actually gets the head of the file fetched; without it, priming
+    // sat at 0% while the picker pulled rarest-first from all over the file.
+    //
+    // The per-piece deadlines still matter for everything that is not at the
+    // front - they are just re-asserted rather than trusted to stick. See
+    // awaitPiece() in stream.cpp.
     e.handle.set_flags(lt::torrent_flags::sequential_download);
 
     // The tail must land before any player can parse the container.
@@ -534,18 +547,25 @@ void playFile(Engine& e, int index) {
     const double durationSec = e.runtimeMinutes > 0 ? e.runtimeMinutes * 60.0 : 24 * 60.0;
     const double bitrate = static_cast<double>(chosen->size) / durationSec;  // bytes/sec
 
-    // The tail must land before any player can parse the container, and a few
-    // head pieces before it can start decoding. Fetch that much first, and use
-    // the wait to measure throughput.
+    // Ask for the head and the tail at once - the head to start decoding, the
+    // tail because that is where a container keeps its index.
+    //
+    // Only the head is waited for, though. The tail is the one part of this
+    // that a swarm sometimes will not hand over promptly, and blocking on it
+    // left "Preparing stream 50%" on screen indefinitely with a gigabyte
+    // already fetched. It no longer needs to block: if the player asks for the
+    // index before it arrives, the stream server waits for it and asks for it
+    // by piece, which is a buffering pause rather than a hang.
     std::vector<int> priming;
     const int primeHead = std::max(1, static_cast<int>((4 * 1024 * 1024 + pieceLen - 1) / pieceLen));
     for (int p = firstPiece; p <= std::min(firstPiece + primeHead - 1, lastPiece); ++p) {
         priming.push_back(p);
     }
-    for (int p = std::max(lastPiece - kTailPieces + 1, firstPiece); p <= lastPiece; ++p) {
-        if (std::find(priming.begin(), priming.end(), p) == priming.end()) priming.push_back(p);
-    }
     for (const int p : priming) {
+        e.handle.piece_priority(lt::piece_index_t{p}, lt::top_priority);
+        e.handle.set_piece_deadline(lt::piece_index_t{p}, 0);
+    }
+    for (int p = std::max(lastPiece - kTailPieces + 1, firstPiece); p <= lastPiece; ++p) {
         e.handle.piece_priority(lt::piece_index_t{p}, lt::top_priority);
         e.handle.set_piece_deadline(lt::piece_index_t{p}, 0);
     }
@@ -563,6 +583,14 @@ void playFile(Engine& e, int index) {
                      std::to_string(e.handle.status().num_peers) + " peers)");
         if (have == static_cast<int>(priming.size())) break;
         if (e.stopRequested) { e.done = true; e.playing = false; return; }
+
+        // Bounded, because this wait is an optimisation now rather than a
+        // correctness requirement. It exists to have something buffered before
+        // the picture starts, but the stream server blocks on whatever the
+        // player actually reads and re-asks for it, so starting without the
+        // full head costs a moment of buffering rather than a broken file.
+        // Left unbounded it could sit here indefinitely - which it did.
+        if (std::chrono::steady_clock::now() - measureStart > std::chrono::seconds(20)) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(400));
     }
 
@@ -599,6 +627,7 @@ void playFile(Engine& e, int index) {
         e.handle.piece_priority(lt::piece_index_t{p}, lt::top_priority);
         e.handle.set_piece_deadline(lt::piece_index_t{p}, 0);
     }
+    const auto bufferStart = std::chrono::steady_clock::now();
     for (;;) {
         int have = 0;
         const int last = std::min(firstPiece + bufferPieces - 1, lastPiece);
@@ -613,6 +642,7 @@ void playFile(Engine& e, int index) {
                      std::to_string(e.handle.status().num_peers) + " peers");
         if (have >= total) break;
         if (e.stopRequested) { e.done = true; e.playing = false; return; }
+        if (std::chrono::steady_clock::now() - bufferStart > std::chrono::seconds(25)) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(400));
     }
 
@@ -620,6 +650,17 @@ void playFile(Engine& e, int index) {
     e.setMessage("Playing");
 
     const std::string path = e.savePath + "/" + chosen->path;
+
+    // The player reads through our own server rather than off the disk, so a
+    // read of a region that has not arrived waits instead of coming back as
+    // zeros. See stream.hpp - this is what stops the episode skipping.
+    const std::string url = stream::serve(e.handle, e.info, chosen->index, e.savePath);
+    if (url.empty()) {
+        e.setMessage("Could not start the local stream.");
+        e.done = true;
+        e.playing = false;
+        return;
+    }
 
     // Resume where this episode was left, if it was left anywhere useful.
     const int watchedEp = chosen->episode.valid && !chosen->episode.isRange()
@@ -689,7 +730,7 @@ void playFile(Engine& e, int index) {
     // to explain a refusal, and mpv writes tens of thousands of status lines a
     // minute otherwise.
     cmd += " --msg-level=all=warn --term-status-msg=";
-    cmd += " \"" + path + "\"";
+    cmd += " \"" + url + "\"";
 
     {
         json entry{{"magnet", e.openMagnet},
@@ -959,6 +1000,10 @@ void playFile(Engine& e, int index) {
     const bool refusedToPlay = lastPosition <= 0.01;
     std::string mpvSaid;
     if (refusedToPlay) mpvSaid = tailOfMpvLog(4);
+
+    // Let go of the file before anything downstream tries to delete it, and
+    // release any request still blocked waiting for a piece.
+    stream::stop();
 
     // Nothing is being watched any more, so nothing should still be arriving.
     wantNothing(e);
@@ -1595,6 +1640,10 @@ std::vector<HistoryItem> history() {
 }
 
 void shutdown() {
+    // First, so nothing is still holding a file open or blocked on a piece
+    // that is never going to arrive now.
+    stream::shutdown();
+
     discord::clear();
     discord::disconnect();
     // Before anything that can block: the queue and the watch database must

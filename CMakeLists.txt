@@ -31,6 +31,7 @@ add_library(tsuzuki_core STATIC
   src/sources/sources.cpp
   src/ui.cpp
   src/player.cpp
+  src/stream.cpp
   src/track.cpp
   src/trackers.cpp
   src/trackers_ext.cpp
