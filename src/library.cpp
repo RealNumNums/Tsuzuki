@@ -1,6 +1,7 @@
 #include "library.hpp"
 
 #include "track.hpp"
+#include "tracker.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -23,14 +24,25 @@ using nlohmann::json;
 
 // A write that has not reached AniList yet.
 struct PendingUpdate {
-    int mediaId = 0;
+    int mediaId = 0;  // AniList id, which is what the rest of the app keys on
+    int malId = 0;    // the same show, in the terms other services understand
     int progress = 0;
     std::string status;  // CURRENT / COMPLETED
     long long queuedAt = 0;
     int attempts = 0;
     long long nextAttemptAt = 0;
     std::string lastError;
-    bool parked = false;  // AniList rejected it outright; retrying will not help
+    bool parked = false;  // rejected outright; retrying will not help
+
+    // Which services have taken it. A write is only finished once every
+    // linked service has it, and a service that was linked later should not
+    // be considered to have missed anything - so this records success rather
+    // than counting attempts.
+    std::vector<std::string> deliveredTo;
+
+    bool deliveredToService(const std::string& id) const {
+        return std::find(deliveredTo.begin(), deliveredTo.end(), id) != deliveredTo.end();
+    }
 };
 
 std::mutex g_mutex;
@@ -103,6 +115,8 @@ void saveLocked() {
     json queue = json::array();
     for (const auto& q : g_queue) {
         queue.push_back({{"mediaId", q.mediaId},
+                         {"malId", q.malId},
+                         {"deliveredTo", q.deliveredTo},
                          {"progress", q.progress},
                          {"status", q.status},
                          {"queuedAt", q.queuedAt},
@@ -262,6 +276,12 @@ void loadLocked() {
                 if (!v.is_object()) continue;
                 PendingUpdate q;
                 q.mediaId = static_cast<int>(num(v, "mediaId"));
+                q.malId = static_cast<int>(num(v, "malId"));
+                if (v.contains("deliveredTo") && v["deliveredTo"].is_array()) {
+                    for (const auto& d : v["deliveredTo"]) {
+                        if (d.is_string()) q.deliveredTo.push_back(d.get<std::string>());
+                    }
+                }
                 q.progress = static_cast<int>(num(v, "progress"));
                 q.status = str(v, "status");
                 q.queuedAt = num(v, "queuedAt");
@@ -284,6 +304,14 @@ void loadLocked() {
 }
 
 void nudgeWorker() { g_wake.notify_all(); }
+
+// Any service at all, since a queued write is for whoever is linked.
+bool anyLinked() {
+    for (tracker::Service* s : tracker::all()) {
+        if (s->linked()) return true;
+    }
+    return false;
+}
 
 // 2s, 4s, 8s... capped at five minutes. Long enough not to hammer AniList
 // through an outage, short enough that coming back online feels immediate.
@@ -430,7 +458,7 @@ SyncStatus syncStatus() {
         if (q.attempts > 0) retrying = true;
     }
 
-    if (!track::linked()) {
+    if (!anyLinked()) {
         s.state = SyncState::NotLinked;
     } else if (g_syncing) {
         s.state = SyncState::Syncing;
@@ -543,7 +571,7 @@ namespace {
 // Merge an AniList pull into the cache. An entry we have queued a higher
 // progress for keeps the local number: AniList simply has not been told yet,
 // and taking its answer would roll the user backwards.
-void mergePull(const std::vector<track::ListEntry>& entries) {
+void mergePull(const std::vector<tracker::Entry>& entries) {
     std::lock_guard<std::mutex> lock(g_mutex);
     loadLocked();
 
@@ -627,11 +655,34 @@ bool drainQueue() {
     for (const auto& q : due) {
         if (!g_running) return true;
 
-        const bool ok = track::updateEntry(q.mediaId, q.progress, q.status);
+        // Every linked service that has not already taken this write. A
+        // failure against one must not hold up the others, and must not undo
+        // the ones that already succeeded - hence recording delivery per
+        // service rather than one flag for the row.
+        tracker::MediaRef ref;
+        ref.anilistId = q.mediaId;
+        ref.malId = q.malId;
+
+        std::vector<std::string> justDelivered;
+        bool everyoneHasIt = true;
+        for (tracker::Service* svc : tracker::all()) {
+            if (!svc->linked()) continue;
+            if (q.deliveredToService(svc->id())) continue;
+            if (svc->update(ref, q.progress, q.status)) {
+                justDelivered.push_back(svc->id());
+            } else {
+                everyoneHasIt = false;
+            }
+        }
+        const bool ok = everyoneHasIt;
 
         std::lock_guard<std::mutex> lock(g_mutex);
         for (auto it = g_queue.begin(); it != g_queue.end(); ++it) {
             if (it->mediaId != q.mediaId) continue;
+
+            for (const auto& d : justDelivered) {
+                if (!it->deliveredToService(d)) it->deliveredTo.push_back(d);
+            }
 
             if (ok) {
                 // Something newer may have been queued while this was in
@@ -675,7 +726,7 @@ void workerLoop() {
     long long lastPull = 0;
 
     while (g_running) {
-        const bool linked = track::linked();
+        const bool linked = anyLinked();
 
         if (linked) {
             const long long now = nowMs();
@@ -687,7 +738,11 @@ void workerLoop() {
                 lastPull = now;
                 g_syncing = true;
                 bool ok = false;
-                const auto entries = track::lists(&ok);
+                // Reading the library is the primary service's job: it is the
+                // one that also supplies artwork, titles and the cross-service
+                // id. The others are written to, not read from - merging four
+                // opinions of the same list is a different problem.
+                const auto entries = tracker::primary()->lists(&ok);
                 if (ok) {
                     // Cleared before the merge, not after: mergePull is what
                     // writes the file, so clearing afterwards left the old
