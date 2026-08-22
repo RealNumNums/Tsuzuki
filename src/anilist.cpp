@@ -239,6 +239,7 @@ bool details(int id, Details& out) {
 
     const auto& m = j["data"]["Media"];
     out.id = m.value("id", 0);
+    out.idMal = m.contains("idMal") && !m["idMal"].is_null() ? m["idMal"].get<int>() : 0;
     out.episodes = m.contains("episodes") && !m["episodes"].is_null()
                        ? m["episodes"].get<int>() : 0;
     out.duration = m.contains("duration") && !m["duration"].is_null()

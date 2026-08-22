@@ -59,6 +59,11 @@ struct EpisodeInfo {
 // the cover image, rather than depending on them.
 struct Details {
     int id = 0;
+    // MyAnimeList id for the same show. AniList publishes it, and it is the
+    // bridge every other tracker understands - Simkl and Kitsu both accept a
+    // MAL id, and MAL obviously does. Without it there is no way to say "this
+    // show" to anyone but AniList.
+    int idMal = 0;
     int episodes = 0;
     int duration = 0;  // minutes
     std::string title;    // romaji, or english when there is no romaji
