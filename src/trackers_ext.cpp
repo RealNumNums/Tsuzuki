@@ -128,9 +128,14 @@ class MyAnimeList final : public Service {
             out.name = cachedName_;
             return out;
         }
-        const auto res = http::get("https://api.myanimelist.net/v2/users/@me", 15, bearer(token));
+        auto res = http::get("https://api.myanimelist.net/v2/users/@me", 15, bearer(token));
+        if (res.status == 401 && refresh()) {
+            res = http::get("https://api.myanimelist.net/v2/users/@me", 15,
+                            bearer(str(creds("mal"), "access_token")));
+        }
         if (!res.ok) {
-            // Only forget a credential the server has actually rejected.
+            // Only forget a credential the server has actually rejected, and
+            // only once refreshing it has also failed.
             if (res.status == 401) logout();
             return out;
         }
@@ -198,14 +203,38 @@ class MyAnimeList final : public Service {
         std::string body = "status=" + malStatus(status);
         if (progress > 0) body += "&num_watched_episodes=" + std::to_string(progress);
 
-        const auto res = http::patchForm(
-            "https://api.myanimelist.net/v2/anime/" + std::to_string(what.malId) +
-                "/my_list_status",
-            body, 20, bearer(token));
+        const std::string url = "https://api.myanimelist.net/v2/anime/" +
+                                std::to_string(what.malId) + "/my_list_status";
+        auto res = http::patchForm(url, body, 20, bearer(token));
+        if (res.status == 401 && refresh()) {
+            res = http::patchForm(url, body, 20, bearer(str(creds("mal"), "access_token")));
+        }
         return res.ok;
     }
 
   private:
+    // MyAnimeList access tokens last about a month. Without this the link
+    // would simply stop working one day with no explanation, which looks
+    // exactly like a bug.
+    bool refresh() {
+        const std::string rt = str(creds("mal"), "refresh_token");
+        if (rt.empty() || clientId().empty()) return false;
+        const std::string body =
+            "client_id=" + clientId() + "&grant_type=refresh_token&refresh_token=" + rt;
+        const auto res = http::postForm("https://myanimelist.net/v1/oauth2/token", body, 20);
+        if (!res.ok) return false;
+        try {
+            const json j = json::parse(res.body);
+            const std::string token = j.value("access_token", "");
+            if (token.empty()) return false;
+            setCreds("mal", json{{"access_token", token},
+                                 {"refresh_token", j.value("refresh_token", rt)}});
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+
     static std::string malStatus(const std::string& s) {
         if (s == "COMPLETED") return "completed";
         if (s == "PAUSED") return "on_hold";
@@ -395,7 +424,11 @@ class Kitsu final : public Service {
             out.id = cachedId_;
             return out;
         }
-        const auto res = http::get("https://kitsu.app/api/edge/users?filter[self]=true", 15, token);
+        auto res = http::get("https://kitsu.app/api/edge/users?filter[self]=true", 15, token);
+        if (res.status == 401 && refresh()) {
+            res = http::get("https://kitsu.app/api/edge/users?filter[self]=true", 15,
+                            str(creds("kitsu"), "access_token"));
+        }
         if (!res.ok) {
             if (res.status == 401) logout();
             return out;
@@ -490,6 +523,26 @@ class Kitsu final : public Service {
     }
 
   private:
+    // Kitsu tokens expire too, and re-asking for a password because one did
+    // is exactly the prompt nobody should be trained to expect.
+    bool refresh() {
+        const std::string rt = str(creds("kitsu"), "refresh_token");
+        if (rt.empty()) return false;
+        const json body{{"grant_type", "refresh_token"}, {"refresh_token", rt}};
+        const auto res = http::postJson("https://kitsu.app/api/oauth/token", body.dump(), 20);
+        if (!res.ok) return false;
+        try {
+            const json j = json::parse(res.body);
+            const std::string token = j.value("access_token", "");
+            if (token.empty()) return false;
+            setCreds("kitsu", json{{"access_token", token},
+                                   {"refresh_token", j.value("refresh_token", rt)}});
+            return true;
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+
     static std::string kitsuStatus(const std::string& s) {
         if (s == "COMPLETED") return "completed";
         if (s == "PAUSED") return "on_hold";
