@@ -87,6 +87,9 @@ struct CachedMedia {
     std::string color;
     std::string airing;
     long long updatedAt = 0;
+    // When *we* last changed this entry, as opposed to when a pull last
+    // refreshed it. Only the former should hold off a deletion.
+    long long localChangeAt = 0;
 };
 
 // Served immediately at startup so the home screen never waits on the network.

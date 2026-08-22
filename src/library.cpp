@@ -95,7 +95,8 @@ void saveLocked() {
                                      {"episodes", m.episodes}, {"nextEpisode", m.nextEpisode},
                                      {"status", m.status},     {"title", m.title},
                                      {"cover", m.cover},       {"color", m.color},
-                                     {"airing", m.airing},     {"updatedAt", m.updatedAt}};
+                                     {"airing", m.airing},     {"updatedAt", m.updatedAt},
+                                     {"localChangeAt", m.localChangeAt}};
     }
     out["media"] = media;
 
@@ -115,19 +116,45 @@ void saveLocked() {
 
     const std::string path = storePath();
     const std::string tmp = path + ".tmp";
+
+    // Every failure below used to return quietly and then clear the dirty
+    // flag anyway, so a database that could not be written was
+    // indistinguishable from one that had been. It now says what went wrong
+    // and stays dirty, so the next save - or the flush on the way out - tries
+    // again instead of dropping the change.
+    std::string trouble;
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) return;
-        f << out.dump(2) << "\n";
-        if (!f) return;
+        if (!f) {
+            trouble = "could not open " + tmp;
+        } else {
+            try {
+                f << out.dump(2) << "\n";
+            } catch (const std::exception& ex) {
+                // dump throws on a string that is not valid UTF-8, which an
+                // odd release name can produce.
+                trouble = std::string("could not serialise: ") + ex.what();
+            }
+            if (trouble.empty() && !f) trouble = "write failed";
+        }
     }
-    std::error_code ec;
-    std::filesystem::rename(tmp, path, ec);
-    if (ec) {
-        // rename onto an existing file can fail if something has it open;
-        // fall back rather than leaving the update only in the temp file.
-        std::filesystem::remove(path, ec);
+
+    if (trouble.empty()) {
+        std::error_code ec;
         std::filesystem::rename(tmp, path, ec);
+        if (ec) {
+            // Renaming onto an open file can fail; replacing it outright is
+            // the fallback, and only then is the change genuinely lost.
+            std::error_code ec2;
+            std::filesystem::remove(path, ec2);
+            std::filesystem::rename(tmp, path, ec);
+            if (ec) trouble = "could not replace " + path + ": " + ec.message();
+        }
+    }
+
+    if (!trouble.empty()) {
+        g_lastError = "Could not save the watch database - " + trouble;
+        return;  // still dirty, so this will be retried
     }
     g_dirty = false;
 }
@@ -225,6 +252,7 @@ void loadLocked() {
                 m.color = str(v, "color");
                 m.airing = str(v, "airing");
                 m.updatedAt = num(v, "updatedAt");
+                m.localChangeAt = num(v, "localChangeAt");
                 g_media[m.mediaId] = m;
             }
         }
@@ -434,6 +462,7 @@ void markWatching(int mediaId) {
         m.mediaId = mediaId;
         m.status = "CURRENT";
         m.updatedAt = nowMs();
+        m.localChangeAt = nowMs();
 
         PendingUpdate q;
         q.mediaId = mediaId;
@@ -468,6 +497,7 @@ void recordWatched(int mediaId, int episode, int totalEpisodes) {
             m.progress = episode;
             m.updatedAt = nowMs();
         }
+        m.localChangeAt = nowMs();
         if (m.episodes <= 0 && totalEpisodes > 0) m.episodes = totalEpisodes;
         m.nextEpisode = (m.episodes > 0 && m.progress >= m.episodes) ? m.progress : m.progress + 1;
         if (!status.empty()) m.status = status;
@@ -562,7 +592,10 @@ void mergePull(const std::vector<track::ListEntry>& entries) {
             for (const auto& q : g_queue) {
                 if (q.mediaId == it->first && !q.parked) queued = true;
             }
-            const bool justWritten = now - it->second.updatedAt < 60000;
+            // Deliberately localChangeAt, not updatedAt: every pull refreshes
+            // updatedAt, so using it meant the guard protected everything for a
+            // minute after any pull and deletions took minutes to show up.
+            const bool justWritten = now - it->second.localChangeAt < 60000;
             if (queued || justWritten) {
                 ++it;
             } else {
