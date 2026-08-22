@@ -1,5 +1,7 @@
 #include "async.hpp"
 
+#include "../anilist.hpp"
+
 #include <atomic>
 #include <mutex>
 #include <thread>
@@ -31,6 +33,9 @@ ui::Discovery g_discoverResult;
 
 Slot g_moreSlot;
 ui::MorePage g_moreResult;
+
+Slot g_schedSlot;
+std::vector<ui::AiringEntry> g_schedResult;
 
 std::atomic<bool> g_alive{true};
 
@@ -177,6 +182,59 @@ bool takeMore(ui::MorePage& out) {
     if (!g_moreSlot.ready) return false;
     out = std::move(g_moreResult);
     g_moreSlot.ready = false;
+    return true;
+}
+
+// ---------------------------------------------------------------- schedule
+
+void schedule(long long fromUnix, long long toUnix, bool mineOnly) {
+    const int gen = ++g_schedSlot.generation;
+    g_schedSlot.running = true;
+    {
+        std::lock_guard<std::mutex> lock(g_schedSlot.mutex);
+        g_schedSlot.ready = false;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_schedSlot.mutex);
+        g_schedResult.clear();
+    }
+
+    std::thread([fromUnix, toUnix, mineOnly, gen] {
+        // Page by page, publishing each one, so the month fills in visibly
+        // instead of sitting blank for as long as the whole window takes.
+        for (int page = 1; page <= anilist::kAiringPageCap; ++page) {
+            bool hasNext = false;
+            auto part = ui::schedulePage(fromUnix, toUnix, page, mineOnly, &hasNext);
+
+            if (!g_alive) return;
+            if (g_schedSlot.generation.load() != gen) return;  // month changed
+
+            if (!part.empty()) {
+                std::lock_guard<std::mutex> lock(g_schedSlot.mutex);
+                g_schedResult.insert(g_schedResult.end(), std::make_move_iterator(part.begin()),
+                                     std::make_move_iterator(part.end()));
+                g_schedSlot.ready = true;
+            }
+            if (g_notify) g_notify();
+            if (!hasNext) break;
+        }
+
+        if (g_schedSlot.generation.load() != gen) return;
+        g_schedSlot.running = false;
+        if (g_notify) g_notify();
+    }).detach();
+}
+
+bool scheduleRunning() { return g_schedSlot.running; }
+
+bool takeSchedule(std::vector<ui::AiringEntry>& out) {
+    std::lock_guard<std::mutex> lock(g_schedSlot.mutex);
+    if (!g_schedSlot.ready) return false;
+    out.insert(out.end(), std::make_move_iterator(g_schedResult.begin()),
+               std::make_move_iterator(g_schedResult.end()));
+    g_schedResult.clear();
+    g_schedSlot.ready = false;
     return true;
 }
 

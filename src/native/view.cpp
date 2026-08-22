@@ -183,7 +183,7 @@ bool header(Ui& u, State& st) {
     u.c.text(L"続き", {kPad + 78, 24, 60, 20}, accent.withAlpha(0.85f), f(13));
 
     // Search field
-    const Rect box{kPad + 150, 14, w - kPad * 2 - 150 - 490, 34};
+    const Rect box{kPad + 150, 14, w - kPad * 2 - 150 - 580, 34};
     const bool overBox = box.contains(u.in.mouseX, u.in.mouseY);
     if (u.in.mousePressed) st.queryFocused = overBox;
     u.c.fill(box, gfx::rgb(0x16161F), 9);
@@ -221,9 +221,10 @@ bool header(Ui& u, State& st) {
     struct NavItem { const wchar_t* label; Screen screen; float width; };
     const NavItem nav[] = {{L"Home", Screen::Home, 62},
                            {L"Discover", Screen::Discover, 82},
+                           {L"Schedule", Screen::Schedule, 84},
                            {L"Settings", Screen::Settings, 84}};
     float navX = go.right() + 16;
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         const Rect item{navX, 14, nav[i].width, 34};
         const bool on = st.screen == nav[i].screen;
         const bool over = u.clickable(9010 + i, item);
@@ -552,6 +553,7 @@ bool frame(Ui& u, State& st) {
         case Screen::Episodes: wantMore = episodesScreen(u, st); break;
         case Screen::Discover: wantMore = discoverScreen(u, st); break;
         case Screen::Shelf: wantMore = shelfScreen(u, st); break;
+        case Screen::Schedule: wantMore = scheduleScreen(u, st); break;
         default: break;
     }
 

@@ -1,4 +1,4 @@
-#include "anilist.hpp"
+﻿#include "anilist.hpp"
 #include <algorithm>
 #include <thread>
 #include <mutex>
@@ -279,8 +279,9 @@ bool details(int id, Details& out) {
 namespace {
 
 constexpr const char* kAiringQuery = R"(
-query ($from: Int, $to: Int) {
-  Page(page: 1, perPage: 50) {
+query ($from: Int, $to: Int, $page: Int) {
+  Page(page: $page, perPage: 50) {
+    pageInfo { hasNextPage }
     airingSchedules(airingAt_greater: $from, airingAt_lesser: $to, sort: TIME) {
       episode
       airingAt
@@ -603,15 +604,46 @@ std::vector<BrowseItem> browse(const BrowseFilters& f) {
 }
 
 std::vector<AiringItem> airing(int days) {
-    std::vector<AiringItem> out;
-
     const long long now = static_cast<long long>(std::time(nullptr));
+    return airingBetween(now, now + static_cast<long long>(days) * 86400);
+}
+
+// The same shape, filtered to specific shows. AniList rejects a null id list
+// rather than ignoring it, so the filtered and unfiltered forms have to be two
+// query strings even though everything below the first line is identical.
+constexpr const char* kMyAiringQuery = R"(
+query ($ids: [Int], $from: Int, $to: Int, $page: Int) {
+  Page(page: $page, perPage: 50) {
+    pageInfo { hasNextPage }
+    airingSchedules(mediaId_in: $ids, airingAt_greater: $from, airingAt_lesser: $to, sort: TIME) {
+      episode
+      airingAt
+      media {
+        id
+        title { romaji english }
+        coverImage { large color }
+        isAdult
+      }
+    }
+  }
+}
+)";
+
+// One page of an airing window, optionally narrowed to a set of shows.
+std::vector<AiringItem> airingPage(long long from, long long to, int page,
+                                   const std::vector<int>* onlyThese, bool* hasNext) {
+    std::vector<AiringItem> out;
+    if (hasNext) *hasNext = false;
+    if (onlyThese && onlyThese->empty()) return out;
+
     json vars;
-    vars["from"] = now;
-    vars["to"] = now + static_cast<long long>(days) * 86400;
+    vars["from"] = from;
+    vars["to"] = to;
+    vars["page"] = page;
+    if (onlyThese) vars["ids"] = *onlyThese;
 
     json body;
-    body["query"] = kAiringQuery;
+    body["query"] = onlyThese ? kMyAiringQuery : kAiringQuery;
     body["variables"] = vars;
 
     const auto res = post(body.dump(), "");
@@ -640,7 +672,8 @@ std::vector<AiringItem> airing(int days) {
         if (!it.mediaId) continue;
         it.episode = intOr(a.contains("episode") ? a["episode"] : json(), 0);
         it.airingAt = a.contains("airingAt") && a["airingAt"].is_number()
-                          ? a["airingAt"].get<long long>() : 0;
+                          ? a["airingAt"].get<long long>()
+                          : 0;
 
         const json t = m.value("title", json::object());
         it.title = pick(t, "romaji");
@@ -651,6 +684,25 @@ std::vector<AiringItem> airing(int days) {
         it.color = pick(ci, "color");
 
         out.push_back(std::move(it));
+    }
+
+    const json info = data["Page"].value("pageInfo", json::object());
+    if (hasNext) *hasNext = info.value("hasNextPage", false);
+    return out;
+}
+
+// The whole window at once, for callers that cannot show partial results.
+//
+// Capped, because an unbounded loop against a thirty-a-minute budget is a way
+// to lock the whole app out over one calendar view.
+std::vector<AiringItem> airingBetween(long long from, long long to) {
+    std::vector<AiringItem> out;
+    for (int page = 1; page <= kAiringPageCap; ++page) {
+        bool hasNext = false;
+        auto part = airingPage(from, to, page, nullptr, &hasNext);
+        out.insert(out.end(), std::make_move_iterator(part.begin()),
+                   std::make_move_iterator(part.end()));
+        if (!hasNext) break;
     }
     return out;
 }

@@ -124,6 +124,28 @@ struct MorePage {
 };
 MorePage discoverMore(const std::string& shelfKey, const std::string& genre, int page);
 
+// ---- airing schedule -------------------------------------------------
+
+struct AiringEntry {
+    int mediaId = 0;
+    int episode = 0;
+    long long airingAt = 0;  // unix seconds
+    std::string title;
+    std::string cover;
+    bool onMyList = false;   // so the calendar can be narrowed to what you watch
+};
+
+// Everything airing in a window, newest information first. Blocking.
+std::vector<AiringEntry> schedule(long long fromUnix, long long toUnix);
+
+// The same window, one page at a time, so a caller can show what it has while
+// the rest is still coming. Blocking, for one page.
+// `mineOnly` asks AniList about the shows on your list and nothing else, which
+// is both what the calendar usually wants and a single request instead of
+// sixteen.
+std::vector<AiringEntry> schedulePage(long long fromUnix, long long toUnix, int page,
+                                      bool mineOnly, bool* hasNext);
+
 // The genres worth offering as filters.
 std::vector<std::string> genreList();
 

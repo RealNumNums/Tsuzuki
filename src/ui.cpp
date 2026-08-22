@@ -27,6 +27,7 @@
 #include <memory>
 #include <map>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -1219,6 +1220,51 @@ MorePage discoverMore(const std::string& shelfKey, const std::string& genre, int
         out.items.push_back(std::move(d));
     }
     out.error = error;
+    return out;
+}
+
+namespace {
+
+// Which shows are already on the list, so the calendar can be narrowed to them
+// without another request.
+std::set<int> myMediaIds() {
+    std::set<int> mine;
+    for (const auto& m : library::cachedList()) mine.insert(m.mediaId);
+    return mine;
+}
+
+AiringEntry toEntry(const anilist::AiringItem& a, const std::set<int>& mine) {
+    AiringEntry e;
+    e.mediaId = a.mediaId;
+    e.episode = a.episode;
+    e.airingAt = a.airingAt;
+    e.title = a.title;
+    e.cover = a.cover;
+    e.onMyList = mine.count(a.mediaId) > 0;
+    return e;
+}
+
+}  // namespace
+
+std::vector<AiringEntry> schedulePage(long long fromUnix, long long toUnix, int page,
+                                      bool mineOnly, bool* hasNext) {
+    const std::set<int> mine = myMediaIds();
+    std::vector<AiringEntry> out;
+
+    const std::vector<int> ids(mine.begin(), mine.end());
+    const std::vector<int>* filter = mineOnly ? &ids : nullptr;
+    for (const auto& a : anilist::airingPage(fromUnix, toUnix, page, filter, hasNext)) {
+        out.push_back(toEntry(a, mine));
+    }
+    return out;
+}
+
+std::vector<AiringEntry> schedule(long long fromUnix, long long toUnix) {
+    const std::set<int> mine = myMediaIds();
+    std::vector<AiringEntry> out;
+    for (const auto& a : anilist::airingBetween(fromUnix, toUnix)) {
+        out.push_back(toEntry(a, mine));
+    }
     return out;
 }
 

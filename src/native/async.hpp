@@ -38,6 +38,13 @@ void more(const std::string& shelfKey, const std::string& genre, int page);
 bool moreRunning();
 bool takeMore(ui::MorePage& out);
 
+void schedule(long long fromUnix, long long toUnix, bool mineOnly);
+bool scheduleRunning();
+// Appends whatever pages have arrived since the last call, rather than
+// replacing — the schedule comes in over a dozen round trips and the calendar
+// draws what it has as it goes.
+bool takeSchedule(std::vector<ui::AiringEntry>& out);
+
 void shutdown();
 
 }  // namespace tsuzuki::async

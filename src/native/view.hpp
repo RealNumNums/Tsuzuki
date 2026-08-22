@@ -14,6 +14,8 @@
 #include "../ui.hpp"
 #include "gfx.hpp"
 
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -72,7 +74,7 @@ class Ui {
 };
 
 // Which screen is showing. The window owns this; screens ask to change it.
-enum class Screen { Home, Results, Episodes, Settings, Player, Discover, Shelf };
+enum class Screen { Home, Results, Episodes, Settings, Player, Discover, Shelf, Schedule };
 
 // Everything the interface needs that is not in the engine already.
 struct State {
@@ -98,9 +100,9 @@ struct State {
     // be (target) and where the view actually is (scroll), which eases
     // towards it. contentH is the last measured height, kept so a wheel
     // event can be clamped the moment it arrives rather than a frame later.
-    float scroll[7] = {0, 0, 0, 0, 0, 0, 0};
-    float scrollTarget[7] = {0, 0, 0, 0, 0, 0, 0};
-    float contentH[7] = {0, 0, 0, 0, 0, 0, 0};
+    float scroll[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    float scrollTarget[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    float contentH[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 
     // Settings are edited against a draft and written back a moment after
     // the last change, so holding a key does not rewrite the file each time.
@@ -130,6 +132,22 @@ struct State {
     std::vector<ui::DiscoverItem> openShelfItems;
     int openShelfPage = 1;
     bool openShelfExhausted = false;
+
+    // Airing calendar: which month is shown, and what airs in it.
+    int calYear = 0;
+    int calMonth = 0;
+    // Your own shows by default: a calendar of everything airing is mostly
+    // noise, and asking only about your list is one request instead of sixteen.
+    bool calMineOnly = true;
+    int calShownKey = -1;    // which month+mode `airing` actually holds
+    int calPendingKey = -1;  // which month+mode the in-flight request is for
+    std::vector<ui::AiringEntry> airing;
+
+    // A month costs several requests to assemble, so paging back to one you
+    // have already looked at should not spend them again.
+    std::map<int, std::vector<ui::AiringEntry>> calCache;
+    std::set<int> calDone;  // keys whose fetch ran to the end, so partial
+                            // results from an abandoned month are not reused
 
     // Linking a tracker. Simkl shows a code to type in on its site; Kitsu
     // has no consent page and asks here. Both need somewhere to live while
@@ -161,6 +179,7 @@ bool episodesScreen(Ui&, State&);
 // Defined in discover.cpp.
 bool discoverScreen(Ui&, State&);
 bool shelfScreen(Ui&, State&);
+bool scheduleScreen(Ui&, State&);
 
 // Defined in waiting.cpp - the panel shown while an episode gets ready.
 bool waitingPanel(Ui&, State&, const std::wstring& heading);

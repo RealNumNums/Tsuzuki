@@ -45,6 +45,7 @@ add_library(tsuzuki_core STATIC
   src/native/player_strip.cpp
   src/native/waiting.cpp
   src/native/discover.cpp
+  src/native/schedule.cpp
   src/native/async.cpp
 )
 target_include_directories(tsuzuki_core PUBLIC src)

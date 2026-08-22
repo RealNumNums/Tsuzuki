@@ -141,6 +141,26 @@ struct AiringItem {
 
 std::vector<AiringItem> airing(int days = 7);
 
+// An explicit window, for a calendar that can be paged backwards as well as
+// forwards. Unix seconds, inclusive of `from`, exclusive of `to`.
+std::vector<AiringItem> airingBetween(long long from, long long to);
+
+// One page of that window. A month of everything airing runs to hundreds of
+// entries and a dozen round trips; handing them back a page at a time lets a
+// calendar fill in as they arrive instead of showing nothing for half a
+// minute. `hasNext` says whether the page after this one is worth a request.
+//
+// Pass `onlyThese` to ask about a specific set of shows — the shows on
+// someone's list are usually one page rather than sixteen.
+std::vector<AiringItem> airingPage(long long from, long long to, int page,
+                                   const std::vector<int>* onlyThese, bool* hasNext);
+
+// How many pages a single window is worth spending. A busy month runs to
+// roughly six hundred airings; past the cap its tail is missing rather than
+// the whole month being.
+constexpr int kAiringPageCap = 16;
+
+
 // The genres AniList knows about, for the filter menu.
 std::vector<std::string> genres();
 
