@@ -668,7 +668,14 @@ void playFile(Engine& e, int index) {
         e.setMessage("Resuming at " + std::to_string(static_cast<int>(at) / 60) + "m" +
                      std::to_string(static_cast<int>(at) % 60) + "s");
     }
-    cmd += " --force-window=yes --cache=yes --demuxer-max-bytes=200MiB";
+    // mpv reads ahead to fill its demuxer cache, and 200MiB of appetite
+    // meant it was reading minutes past the playhead - straight into parts
+    // of the file that had not arrived. Reading a sparse file does not fail,
+    // it returns zeros, so those reads came back as corrupt frames and
+    // timestamp resets rather than as a wait. Its read-ahead is now kept
+    // inside the window the rolling piece priorities actually cover.
+    cmd += " --force-window=yes --cache=yes";
+    cmd += " --demuxer-max-bytes=48MiB --demuxer-readahead-secs=20";
     // Warnings and errors only, and no per-frame status line - the log exists
     // to explain a refusal, and mpv writes tens of thousands of status lines a
     // minute otherwise.
@@ -780,13 +787,20 @@ void playFile(Engine& e, int index) {
     // Follow the playhead and keep a window of pieces ahead of it at top
     // priority, instead of downloading the file front-to-back and hoping.
     // Position comes from mpv itself over the IPC socket.
-    const int windowPieces = std::max(2, bufferPieces);
+    // Enough pieces to cover roughly a minute of video, so the window the
+    // priorities cover is comfortably wider than mpv's read-ahead rather
+    // than narrower than it.
+    const int minuteOfPieces =
+        pieceLen > 0 ? static_cast<int>((bitrate * 60.0) / pieceLen) + 1 : 8;
+    const int windowPieces = std::max({2, bufferPieces, minuteOfPieces});
     int lastWindowStart = firstPiece;
     double lastPosition = 0, lastDuration = 0, lastSaved = 0;
     double lastSample = 0;
     bool wasPaused = false, sampled = false;
     DWORD lastPresence = 0;
     bool tracksChosen = false;
+    // True only while playback is held back waiting for data to arrive.
+    bool stalled = false;
     // A silent IPC failure used to look exactly like a normal watch: the video
     // played, and nothing else worked. Notice it and say so instead.
     const auto playbackStart = std::chrono::steady_clock::now();
@@ -879,15 +893,54 @@ void playFile(Engine& e, int index) {
             }
         }
 
+        // How much unbroken data sits in front of the playhead. Counting
+        // stops at the first missing piece on purpose: libtorrent fills a
+        // sparse file out of order, and anything past a hole is not playable
+        // however much of it has arrived.
         int ahead = 0;
-        for (int p = atPiece; p <= std::min(atPiece + windowPieces, lastPiece); ++p) {
+        const int lookahead = (std::max)(windowPieces, 64);
+        for (int p = atPiece; p <= std::min(atPiece + lookahead, lastPiece); ++p) {
             if (!e.handle.have_piece(lt::piece_index_t{p})) break;
             ++ahead;
         }
         const double secsAhead = bitrate > 0 ? (double)ahead * pieceLen / bitrate : 0;
-        e.setMessage(ps.paused ? "Paused" : "Playing - " + std::to_string((int)secsAhead) +
-                                                "s buffered");
+        const bool atEnd = atPiece + ahead >= lastPiece;
+
+        // Hold playback back when the download falls behind, which is the
+        // part that was missing. Reading a sparse file does not block or
+        // fail - the bytes that have not arrived read as zeros - so mpv was
+        // decoding holes rather than waiting. That is what "Invalid audio
+        // PTS: 3.55 -> 36.96" and "Reset playback due to audio timestamp
+        // reset" in its log were: the player skipping across a gap.
+        //
+        // Only ever un-pauses what this paused. Someone who pressed pause
+        // themselves stays paused.
+        if (!atEnd) {
+            if (!stalled && !ps.paused && secsAhead < 2.0) {
+                stalled = true;
+                player::setPaused(true);
+            } else if (stalled && secsAhead >= 8.0) {
+                stalled = false;
+                player::setPaused(false);
+            }
+        } else if (stalled) {
+            // Nothing left to wait for.
+            stalled = false;
+            player::setPaused(false);
+        }
+
+        if (stalled) {
+            e.setMessage("Buffering - " + std::to_string((int)secsAhead) + "s ahead, " +
+                         std::to_string(e.handle.status().num_peers) + " peers");
+        } else {
+            e.setMessage(ps.paused ? "Paused"
+                                   : "Playing - " + std::to_string((int)secsAhead) +
+                                         "s buffered");
+        }
     }
+
+    // Never leave mpv paused by the buffer logic once the loop is over.
+    if (stalled) player::setPaused(false);
 
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);

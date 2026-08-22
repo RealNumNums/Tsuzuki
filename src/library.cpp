@@ -13,6 +13,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <thread>
 
 namespace tsuzuki::library {
@@ -538,6 +539,38 @@ void mergePull(const std::vector<track::ListEntry>& entries) {
         m.updatedAt = nowMs();
     }
 
+    // A pull is the whole list, so anything missing from it has been removed
+    // on the website. Without this the cache only ever grew: deleting a show
+    // on AniList left it sitting in Continue Watching here forever.
+    //
+    // Two exceptions, both about writes AniList has not been told about yet.
+    // Something still in the queue is legitimately absent from its answer,
+    // and something written seconds ago may have missed this snapshot; both
+    // would come straight back on the next pull, so dropping them would only
+    // make the row flicker.
+    {
+        std::set<int> present;
+        for (const auto& e : entries) present.insert(e.mediaId);
+
+        const long long now = nowMs();
+        for (auto it = g_media.begin(); it != g_media.end();) {
+            if (present.count(it->first) > 0) {
+                ++it;
+                continue;
+            }
+            bool queued = false;
+            for (const auto& q : g_queue) {
+                if (q.mediaId == it->first && !q.parked) queued = true;
+            }
+            const bool justWritten = now - it->second.updatedAt < 60000;
+            if (queued || justWritten) {
+                ++it;
+            } else {
+                it = g_media.erase(it);
+            }
+        }
+    }
+
     g_lastSyncAt = nowMs();
     g_dirty = true;
     saveLocked();
@@ -609,7 +642,9 @@ void workerLoop() {
         if (linked) {
             const long long now = nowMs();
             // Re-pull every five minutes, and whenever something asks.
-            if (g_pullRequested || now - lastPull > 5 * 60 * 1000) {
+            // Two minutes rather than five: the point is for this to track
+            // the website closely enough that the two never visibly disagree.
+            if (g_pullRequested || now - lastPull > 2 * 60 * 1000) {
                 g_pullRequested = false;
                 lastPull = now;
                 g_syncing = true;

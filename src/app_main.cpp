@@ -28,6 +28,7 @@
 #include <string>
 
 #include "native/gfx.hpp"
+#include "library.hpp"
 #include "native/async.hpp"
 #include "native/images.hpp"
 #include "native/view.hpp"
@@ -85,6 +86,7 @@ DWORD g_lastActivity = 0;     // when the pointer last moved
 POINT g_lastPointer{-1, -1};
 DWORD g_lastTick = 0;        // for time-based easing
 DWORD g_lastBarPaint = 0;
+DWORD g_lastRefresh = 0;
 bool g_highResTimer = false;
 
 constexpr int kBarH = 84;
@@ -436,6 +438,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             break;
+
+        // Coming back to the window is exactly when someone has just changed
+        // something on the website and expects to see it here.
+        case WM_ACTIVATEAPP:
+            if (wp) {
+                const DWORD now = GetTickCount();
+                if (now - g_lastRefresh > 20000) {
+                    g_lastRefresh = now;
+                    tsuzuki::library::refreshFromAniList();
+                }
+            }
+            return 0;
 
         case WM_IMAGE_READY:
             InvalidateRect(hwnd, nullptr, FALSE);
