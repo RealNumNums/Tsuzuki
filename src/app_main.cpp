@@ -13,6 +13,7 @@
 #include <windows.h>
 
 #include <dwmapi.h>
+#include <mmsystem.h>
 #include <windowsx.h>
 #include <shellapi.h>
 #include <wrl.h>
@@ -82,6 +83,9 @@ tsuzuki::view::Ui g_overlayUi(g_overlayCanvas, g_input);
 float g_barShow = 0.0f;
 DWORD g_lastActivity = 0;     // when the pointer last moved
 POINT g_lastPointer{-1, -1};
+DWORD g_lastTick = 0;        // for time-based easing
+DWORD g_lastBarPaint = 0;
+bool g_highResTimer = false;
 
 constexpr int kBarH = 84;
 constexpr int kBarMaxW = 940;
@@ -101,7 +105,39 @@ constexpr int kControlBar = 92;
 // The bar is a rounded pill centred over the bottom of the picture. The
 // window region does the rounding, because a layered window with uniform
 // alpha cannot round its own corners by drawing.
-void layoutOverlay(HWND hwnd) {
+// Sizing is separate from moving, and deliberately so. Rebuilding the
+// rounded region and resizing the swap chain are both expensive - the swap
+// chain in particular releases its back buffer and rebuilds the render
+// target - and doing either on every animation frame is what made the slide
+// stutter. The bar never changes size mid-slide, only its Y, so this runs
+// once per real size change and the animation only ever moves the window.
+int g_barW = 0, g_barH = 0;
+
+void sizeOverlay(HWND hwnd) {
+    if (!g_overlay) return;
+    RECT b{};
+    GetClientRect(hwnd, &b);
+    const int w = b.right - b.left;
+
+    const float scale = g_canvas.dpiScale();
+    const int barH = static_cast<int>(kBarH * scale);
+    const int barW =
+        (std::min)(static_cast<int>(kBarMaxW * scale), w - static_cast<int>(60 * scale));
+    if (barW == g_barW && barH == g_barH) return;
+
+    g_barW = barW;
+    g_barH = barH;
+    SetWindowPos(g_overlay, nullptr, 0, 0, barW, barH,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    HRGN rgn = CreateRoundRectRgn(0, 0, barW + 1, barH + 1,
+                                  static_cast<int>(18 * scale), static_cast<int>(18 * scale));
+    SetWindowRgn(g_overlay, rgn, TRUE);  // the window now owns the region
+    g_overlayCanvas.resize(0, 0);
+}
+
+// Just the slide. A child window is clipped to its parent, so the part
+// pushed below the bottom edge simply is not drawn - no masking needed.
+void positionOverlay(HWND hwnd) {
     if (!g_overlay) return;
     RECT b{};
     GetClientRect(hwnd, &b);
@@ -109,23 +145,18 @@ void layoutOverlay(HWND hwnd) {
     const int h = b.bottom - b.top;
 
     const float scale = g_canvas.dpiScale();
-    const int barH = static_cast<int>(kBarH * scale);
-    const int barW =
-        (std::min)(static_cast<int>(kBarMaxW * scale), w - static_cast<int>(60 * scale));
-    const int x = (w - barW) / 2;
-
-    // Resting place, then pushed down by however much of the slide is left.
-    // A child window is clipped to its parent, so the part below the bottom
-    // edge simply is not drawn - no masking needed.
-    const int restY = h - barH - static_cast<int>(kBarLift * scale);
+    const int x = (w - g_barW) / 2;
+    const int restY = h - g_barH - static_cast<int>(kBarLift * scale);
     const int hiddenY = h + 4;
-    const int y = static_cast<int>(hiddenY + (restY - hiddenY) * g_barShow);
+    const int y = static_cast<int>(hiddenY + (restY - hiddenY) * g_barShow + 0.5f);
 
-    MoveWindow(g_overlay, x, y, barW, barH, FALSE);
-    HRGN rgn = CreateRoundRectRgn(0, 0, barW + 1, barH + 1,
-                                  static_cast<int>(18 * scale), static_cast<int>(18 * scale));
-    SetWindowRgn(g_overlay, rgn, TRUE);  // the window now owns the region
-    g_overlayCanvas.resize(0, 0);
+    SetWindowPos(g_overlay, nullptr, x, y, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void layoutOverlay(HWND hwnd) {
+    sizeOverlay(hwnd);
+    positionOverlay(hwnd);
 }
 
 void layoutVideo(HWND hwnd, bool playing) {
@@ -139,7 +170,8 @@ void layoutVideo(HWND hwnd, bool playing) {
         // so hiding them gives the picture the entire window.
         MoveWindow(g_video, 0, 0, w, h, TRUE);
         ShowWindow(g_video, SW_SHOW);
-        layoutOverlay(hwnd);
+        sizeOverlay(hwnd);
+        positionOverlay(hwnd);
     } else {
         if (g_video) ShowWindow(g_video, SW_HIDE);
         if (g_overlay) ShowWindow(g_overlay, SW_HIDE);
@@ -156,7 +188,9 @@ void updateOverlay(HWND hwnd) {
 
     POINT p{};
     GetCursorPos(&p);
-    if (std::abs(p.x - g_lastPointer.x) > 2 || std::abs(p.y - g_lastPointer.y) > 2) {
+    // One pixel is enough. Anything larger and a gentle nudge of the mouse -
+    // exactly what someone does when they want the controls back - is ignored.
+    if (std::abs(p.x - g_lastPointer.x) > 1 || std::abs(p.y - g_lastPointer.y) > 1) {
         g_lastPointer = p;
         g_lastActivity = GetTickCount();
     }
@@ -167,28 +201,41 @@ void updateOverlay(HWND hwnd) {
     const bool recent = GetTickCount() - g_lastActivity < kIdleHideMs;
     const float target = (overBar || recent) ? 1.0f : 0.0f;
 
-    const float delta = target - g_barShow;
-    if (std::fabs(delta) < 0.004f) {
-        if (g_barShow == target) return;  // settled; nothing to move
-        g_barShow = target;
-    } else {
-        g_barShow += delta * 0.2f;
-    }
+    // Eased against elapsed time rather than a fixed step per tick, so an
+    // irregular timer produces even motion instead of visible unevenness.
+    const DWORD now = GetTickCount();
+    float dt = (now - g_lastTick) / 1000.0f;
+    g_lastTick = now;
+    if (dt <= 0 || dt > 0.25f) dt = 0.016f;  // first tick, or a stall
 
-    if (g_barShow <= 0.004f) {
+    const float wasShow = g_barShow;
+    const float k = 1.0f - std::exp(-dt / 0.075f);  // ~75ms time constant
+    g_barShow += (target - g_barShow) * k;
+    if (std::fabs(target - g_barShow) < 0.002f) g_barShow = target;
+
+    const bool moving = std::fabs(g_barShow - wasShow) > 0.0005f;
+
+    if (g_barShow <= 0.002f) {
         g_barShow = 0.0f;
-        ShowWindow(g_overlay, SW_HIDE);
+        if (IsWindowVisible(g_overlay)) ShowWindow(g_overlay, SW_HIDE);
         return;
     }
 
-    layoutOverlay(hwnd);
+    if (moving) positionOverlay(hwnd);
     if (!IsWindowVisible(g_overlay)) {
         // NOACTIVATE, or showing the bar would steal focus from the video.
         ShowWindow(g_overlay, SW_SHOWNOACTIVATE);
         SetWindowPos(g_overlay, HWND_TOP, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
-    InvalidateRect(g_overlay, nullptr, FALSE);
+
+    // The contents only change when the playhead does, so redraw four times
+    // a second rather than on every frame of the slide - moving the window
+    // already blits what is there.
+    if (now - g_lastBarPaint > 240) {
+        g_lastBarPaint = now;
+        InvalidateRect(g_overlay, nullptr, FALSE);
+    }
 }
 
 void renderOverlay() {
@@ -491,9 +538,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 SetFocus(g_video);
                 g_lastActivity = GetTickCount();
                 g_barShow = 0.0f;
-                SetTimer(hwnd, kOverlayTimer, 33, nullptr);
+                g_lastTick = GetTickCount();
+                // The default 15.6ms system clock coalesces a 16ms timer down
+                // to roughly twelve ticks a second, which is what made the
+                // slide look stepped. Ask for 1ms while the video is up, and
+                // give it back afterwards - it costs power to hold.
+                if (!g_highResTimer && timeBeginPeriod(1) == TIMERR_NOERROR) {
+                    g_highResTimer = true;
+                }
+                SetTimer(hwnd, kOverlayTimer, 8, nullptr);
             } else {
                 KillTimer(hwnd, kOverlayTimer);
+                if (g_highResTimer) {
+                    timeEndPeriod(1);
+                    g_highResTimer = false;
+                }
             }
             return 0;
         }
@@ -516,6 +575,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
 
         case WM_DESTROY:
+            if (g_highResTimer) {
+                timeEndPeriod(1);
+                g_highResTimer = false;
+            }
             tsuzuki::async::shutdown();
             tsuzuki::images::stop();
             g_overlayCanvas.detach();

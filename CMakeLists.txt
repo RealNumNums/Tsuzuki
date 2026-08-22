@@ -75,6 +75,7 @@ if(WIN32)
     d3d11
     dxgi
     windowscodecs
+    winmm
   )
   set_target_properties(tsuzuki-app PROPERTIES OUTPUT_NAME "Tsuzuki")
 endif()
