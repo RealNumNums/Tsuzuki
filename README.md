@@ -181,6 +181,17 @@ carries it and this repository does not. The token is stored in
 `%LOCALAPPDATA%\Tsuzuki\auth.json`, and is discarded only when AniList
 actually rejects it — never on a timeout.
 
+## Discord presence
+
+Playing something sets a Discord status of "Watching <show>" with the episode
+underneath, updated when you pause and cleared when you stop. Tsuzuki carries
+its own Discord application id so this works without any setup; the Settings
+field is only there to point the presence at a different application.
+
+The artwork Discord shows is an asset named `tsuzuki` on that application -
+`assets/logo-1024.png` is the logo at the size Discord wants, exported from
+`assets/logo.svg`.
+
 ## Licence note
 
 libtorrent and mpv are GPL-family; Anitomy is permissive. That shapes
