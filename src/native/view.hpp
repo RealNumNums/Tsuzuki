@@ -134,6 +134,9 @@ bool settingsScreen(Ui&, State&);
 bool resultsScreen(Ui&, State&);
 bool episodesScreen(Ui&, State&);
 
+// Defined in waiting.cpp - the panel shown while an episode gets ready.
+bool waitingPanel(Ui&, State&, const std::wstring& heading);
+
 // Defined in player_strip.cpp.
 bool playerStrip(Ui&, State&);
 

@@ -240,7 +240,8 @@ void loadLocked() {
                 q.nextAttemptAt = num(v, "nextAttemptAt");
                 q.lastError = str(v, "lastError");
                 q.parked = flag(v, "parked");
-                if (q.mediaId > 0 && q.progress > 0) g_queue.push_back(q);
+                // progress 0 is a legitimate status-only write, not a broken row
+                if (q.mediaId > 0) g_queue.push_back(q);
             }
         }
 
@@ -312,6 +313,22 @@ void forget(const std::string& key) {
     std::lock_guard<std::mutex> lock(g_mutex);
     loadLocked();
     if (g_episodes.erase(key) > 0) saveLocked();
+}
+
+void forgetAllInProgress() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    loadLocked();
+
+    bool changed = false;
+    for (auto it = g_episodes.begin(); it != g_episodes.end();) {
+        if (it->second.completed) {
+            ++it;  // finished episodes are history, not a resume point
+        } else {
+            it = g_episodes.erase(it);
+            changed = true;
+        }
+    }
+    if (changed) saveLocked();
 }
 
 bool worthResuming(const EpisodeProgress& p) {
@@ -394,6 +411,40 @@ SyncStatus syncStatus() {
         s.state = SyncState::Idle;
     }
     return s;
+}
+
+void markWatching(int mediaId) {
+    if (mediaId <= 0) return;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        loadLocked();
+
+        const auto it = g_media.find(mediaId);
+        if (it != g_media.end() &&
+            (it->second.status == "CURRENT" || it->second.status == "REPEATING" ||
+             it->second.status == "COMPLETED")) {
+            return;  // already where it should be
+        }
+        for (const auto& q : g_queue) {
+            if (q.mediaId == mediaId && !q.parked) return;  // already queued
+        }
+
+        auto& m = g_media[mediaId];
+        m.mediaId = mediaId;
+        m.status = "CURRENT";
+        m.updatedAt = nowMs();
+
+        PendingUpdate q;
+        q.mediaId = mediaId;
+        q.progress = 0;  // status only
+        q.status = "CURRENT";
+        q.queuedAt = nowMs();
+        g_queue.push_back(q);
+
+        g_dirty = true;
+        saveLocked();
+    }
+    nudgeWorker();
 }
 
 void recordWatched(int mediaId, int episode, int totalEpisodes) {

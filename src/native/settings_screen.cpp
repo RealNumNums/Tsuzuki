@@ -306,6 +306,18 @@ bool settingsScreen(Ui& u, State& st) {
                               L"Shows what you are watching on your Discord profile.");
         toggle(u, 7610, ctrl, s.discordPresence);
     }
+    if (s.discordPresence) {
+        // Discord will not accept a presence without an application id, and
+        // it has to be one you registered - it is the name Discord shows.
+        // Make one at discord.com/developers, call it Tsuzuki, paste the
+        // Application ID here.
+        const Rect ctrl = row(u, y, w, L"Discord application ID",
+                              L"From discord.com/developers - name the app whatever you want "
+                              L"shown next to \"Watching\".");
+        std::wstring v = widen(s.discordClientId);
+        field(u, st, 7620, ctrl, v, L"required for presence");
+        s.discordClientId = narrow(v);
+    }
 
     y += 30;
     u.contentHeight = y + st.scroll[static_cast<int>(Screen::Settings)] + 20;

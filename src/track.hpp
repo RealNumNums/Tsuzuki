@@ -70,6 +70,10 @@ bool updateProgress(int mediaId, int progress);
 // whatever AniList already has.
 bool updateEntry(int mediaId, int progress, const std::string& status);
 
+// Progress of 0 means "leave the episode count alone, only set the status".
+// That is what puts a show under Watching the moment it is opened, without
+// claiming an episode has been finished.
+
 // An entry on the signed-in user's list.
 struct ListEntry {
     int mediaId = 0;

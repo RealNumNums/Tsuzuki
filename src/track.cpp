@@ -269,9 +269,27 @@ Account account(bool force) {
 }
 
 bool updateEntry(int mediaId, int progress, const std::string& status) {
-    if (mediaId <= 0 || progress <= 0) return false;
+    if (mediaId <= 0) return false;
     const std::string tok = token();
     if (tok.empty()) return false;
+
+    // Status only: the entry appears under Watching straight away, and the
+    // episode count is left for the completion rule to set.
+    if (progress <= 0) {
+        if (status.empty()) return false;
+        const char* only =
+            status == "COMPLETED"
+                ? "mutation ($id: Int) {"
+                  "  SaveMediaListEntry(mediaId: $id, status: COMPLETED) { id status }"
+                  "}"
+                : "mutation ($id: Int) {"
+                  "  SaveMediaListEntry(mediaId: $id, status: CURRENT) { id status }"
+                  "}";
+        const json j = query(only, json{{"id", mediaId}}, tok);
+        if (!j.contains("data") || !j["data"].is_object()) return false;
+        const json& d = j["data"];
+        return d.contains("SaveMediaListEntry") && !d["SaveMediaListEntry"].is_null();
+    }
 
     // status is interpolated rather than passed as a variable because it is a
     // GraphQL enum, not a string; it is checked against a fixed set first so

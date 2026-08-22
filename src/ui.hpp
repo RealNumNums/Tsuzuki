@@ -45,6 +45,10 @@ struct HistoryItem {
 };
 std::vector<HistoryItem> history();
 
+// Remove one row from the recently-opened list, or empty it.
+void forgetHistory(const std::string& magnet, const std::string& file);
+void clearHistory();
+
 // Settings, for the screen that edits them. applySettings writes to disk and
 // pushes the parts the running session cares about (speed limit, connection
 // cap, DoH resolver) straight into libtorrent.
@@ -121,6 +125,13 @@ struct Status {
     bool videoActive = false;
     int progress = 0;
     std::string message;
+
+    // The swarm, for the waiting screen. Reading these from the handle beats
+    // scraping them back out of the message text.
+    int peers = 0;
+    int seeds = 0;
+    long long downloadRate = 0;  // bytes per second
+    long long downloaded = 0;    // bytes this session
 };
 Status status();
 

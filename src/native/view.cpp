@@ -43,6 +43,33 @@ Grid gridFor(float avail, float minW) {
     return {cols, (avail - kGap * (cols - 1)) / cols};
 }
 
+// A small x in the corner of a card. Registered after whatever it sits on,
+// so when the pointer is over both, this one takes the press - the id that
+// registers last during the press is the one the release is matched against.
+bool dismiss(Ui& u, int id, const Rect& r, float reveal) {
+    if (reveal < 0.05f) {
+        u.clickable(id, r);  // still clickable, just not drawn yet
+        return false;
+    }
+    const bool clicked = u.clickable(id, r);
+    const float h = u.hover(id);
+    u.c.fill(r, h > 0.1f ? gfx::rgb(0xE05F5F, reveal) : gfx::rgb(0x000000, 0.55f * reveal),
+             r.w / 2);
+    u.c.text(L"\u00D7", {r.x, r.y + 1, r.w, r.h}, gfx::rgb(0xFFFFFF, reveal),
+             f(15, gfx::Weight::Bold, gfx::Align::Center));
+    return clicked;
+}
+
+// "Clear" on the right of a section heading.
+bool clearLink(Ui& u, int id, float y, float right) {
+    const Rect r{right - 60, y - 3, 60, 24};
+    const bool clicked = u.clickable(id, r);
+    const float h = u.hover(id);
+    u.c.text(L"Clear", {r.x, r.y + 3, r.w, 18}, h > 0.1f ? accent : dim,
+             f(12, gfx::Weight::Medium, gfx::Align::Right));
+    return clicked;
+}
+
 void sectionHeader(Ui& u, const std::wstring& title, const std::wstring& note, float x, float& y,
                    float w) {
     u.c.text(title, {x, y, w, 22}, fg, f(15.5f, gfx::Weight::Semibold));
@@ -279,6 +306,10 @@ bool home(Ui& u, State& st) {
     // ---- Continue watching -------------------------------------------
     if (!cont.empty()) {
         sectionHeader(u, L"Continue watching", L"pick up where you left off", kPad, y, avail);
+        if (clearLink(u, 190, y - 30, kPad + avail)) {
+            library::forgetAllInProgress();
+            return true;  // the list just changed under us
+        }
         const Grid g = gridFor(avail, kCardW);
         const float cardH = g.itemW * 9 / 16 + 62;
 
@@ -329,6 +360,15 @@ bool home(Ui& u, State& st) {
             swprintf(pctText, 24, L"%d%% watched", static_cast<int>(e.percent()));
             u.c.text(pctText, {box.x + 11, art.bottom() + 30, box.w - 22, 16}, dim,
                      f(12, gfx::Weight::Regular, gfx::Align::Right));
+
+            // Registered after the card, so it wins the press when the
+            // pointer is over both.
+            const Rect x{box.right() - 32, box.y + 10, 22, 22};
+            if (dismiss(u, 220 + static_cast<int>(i), x, h)) {
+                library::forget(
+                    library::keyFor(e.anilistId, e.episode, e.infoHash, e.fileIndex));
+                return true;
+            }
 
             if (clicked && !e.magnet.empty()) {
                 st.lastAnilistId = e.anilistId;
@@ -412,6 +452,10 @@ bool home(Ui& u, State& st) {
     // ---- Recently opened ----------------------------------------------
     if (!hist.empty()) {
         sectionHeader(u, L"Recently opened", L"on this machine", kPad, y, avail);
+        if (clearLink(u, 191, y - 30, kPad + avail)) {
+            ui::clearHistory();
+            return true;
+        }
         for (size_t i = 0; i < hist.size() && i < 12; ++i) {
             const auto& h = hist[i];
             const Rect row{kPad, y, avail, 66};
@@ -437,14 +481,20 @@ bool home(Ui& u, State& st) {
             u.c.text(widen(h.show.empty() ? h.torrent : h.show), {tx, row.y + 12, row.w - tx, 20},
                      fg, f(13.5f, gfx::Weight::Semibold));
             u.c.text(widen(h.episode > 0 ? "Episode " + std::to_string(h.episode) : h.file),
-                     {tx, row.y + 32, row.w - tx - 110, 18}, accent.withAlpha(0.9f), f(12));
-            u.c.text(widen(h.torrent), {tx, row.y + 47, row.w - tx - 110, 16}, dim, f(11.5f));
+                     {tx, row.y + 32, row.w - tx - 150, 18}, accent.withAlpha(0.9f), f(12));
+            u.c.text(widen(h.torrent), {tx, row.y + 47, row.w - tx - 150, 16}, dim, f(11.5f));
 
-            const Rect open{row.right() - 96, row.y + 18, 80, 30};
+            const Rect open{row.right() - 130, row.y + 18, 80, 30};
             u.c.fill(open, hv > 0.1f ? accent : gfx::rgb(0x22222E), 8);
             u.c.text(L"Open", {open.x, open.y + 7, open.w, 18},
                      hv > 0.1f ? gfx::rgb(0x2A0D18) : fg,
                      f(12.5f, gfx::Weight::Semibold, gfx::Align::Center));
+
+            const Rect hx{row.right() - 38, row.y + 22, 22, 22};
+            if (dismiss(u, 560 + static_cast<int>(i), hx, hv)) {
+                ui::forgetHistory(h.magnet, h.file);
+                return true;
+            }
 
             if (clicked) {
                 st.lastAnilistId = h.anilistId;

@@ -658,6 +658,26 @@ void playFile(Engine& e, int index) {
         }
     }
 
+    // Two announcements, both at the point playback actually begins rather
+    // than when it finishes:
+    //
+    //  - AniList moves the entry to Watching. Progress is deliberately left
+    //    alone; opening episode 3 does not mean episodes 1 and 2 were seen.
+    //    Without this a show only appeared on the site after a full episode,
+    //    so "what am I watching right now" was never answered.
+    //  - Discord gets the show and episode. setWatching had never been
+    //    called from anywhere, so the presence stayed empty however it was
+    //    configured.
+    {
+        const std::string show = e.showTitle.empty() ? e.info->name() : e.showTitle;
+        if (cfg.syncProgress && e.anilistId > 0) library::markWatching(e.anilistId);
+        if (cfg.discordPresence) {
+            const std::string ep =
+                watchedEp > 0 ? "Episode " + std::to_string(watchedEp) : chosen->name;
+            discord::setWatching(show, ep, false);
+        }
+    }
+
     if (g_playbackHook) g_playbackHook(true);
 
     // CreateProcess rather than system(): we need to stay alive alongside mpv
@@ -725,6 +745,12 @@ void playFile(Engine& e, int index) {
         // loop runs twice a second, so anything past three seconds of movement
         // in one iteration was the user, not playback.
         const bool paused = ps.paused && !wasPaused;
+        if (cfg.discordPresence && ps.paused != wasPaused) {
+            const std::string show = e.showTitle.empty() ? e.info->name() : e.showTitle;
+            const std::string ep =
+                watchedEp > 0 ? "Episode " + std::to_string(watchedEp) : chosen->name;
+            discord::setWatching(show, ep, ps.paused);
+        }
         const bool seeked = sampled && std::fabs(ps.position - lastSample) > 3.0;
         const bool ticked = lastSaved == 0 || std::fabs(ps.position - lastSaved) >= 5.0;
         wasPaused = ps.paused;
@@ -1018,6 +1044,14 @@ Status status() {
     s.videoActive = e.videoActive;
     s.progress = e.progress;
     s.message = e.getMessage();
+
+    if (e.handle.is_valid()) {
+        const lt::torrent_status ts = e.handle.status();
+        s.peers = ts.num_peers;
+        s.seeds = ts.num_seeds;
+        s.downloadRate = ts.download_payload_rate;
+        s.downloaded = ts.total_done;
+    }
     return s;
 }
 
@@ -1090,6 +1124,22 @@ bool startAniListLogin(std::string& error) {
 }
 
 void logoutAniList() { track::logout(); }
+
+void forgetHistory(const std::string& magnet, const std::string& file) {
+    json kept = json::array();
+    for (const auto& e : loadHistory()) {
+        if (!e.is_object()) continue;
+        if (e.value("magnet", "") == magnet && e.value("file", "") == file) continue;
+        kept.push_back(e);
+    }
+    std::ofstream out(historyPath());
+    if (out) out << kept.dump(2) << "\n";
+}
+
+void clearHistory() {
+    std::ofstream out(historyPath());
+    if (out) out << "[]\n";
+}
 
 std::vector<HistoryItem> history() {
     std::vector<HistoryItem> out;

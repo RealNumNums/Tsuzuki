@@ -175,9 +175,7 @@ bool episodesScreen(Ui& u, State& st) {
     if (async::takeOpen(st.opened)) st.openDone = true;
 
     if (async::openRunning()) {
-        busy(u, L"Contacting peers for torrent metadata...");
-        u.contentHeight = 0;
-        return true;
+        return waitingPanel(u, st, L"Finding this release");
     }
     if (!st.openDone) {
         busy(u, L"Nothing open.");
@@ -326,6 +324,18 @@ bool episodesScreen(Ui& u, State& st) {
         u.c.text(L"No episodes were recognised in this torrent.", {kPad, y, avail, 24}, dim,
                  f(13.5f));
         y += 34;
+    }
+
+    // Getting an episode ready takes real time. Cover the list while it
+    // happens rather than leaving a page that looks idle.
+    {
+        const ui::Status s = ui::status();
+        if (s.playing && !s.videoActive) {
+            u.c.fill(u.c.bounds(), shade.withAlpha(0.66f));
+            waitingPanel(u, st, L"Getting the episode ready");
+            u.contentHeight = y + st.scroll[static_cast<int>(Screen::Episodes)] + 20;
+            return true;
+        }
     }
 
     u.contentHeight = y + st.scroll[static_cast<int>(Screen::Episodes)] + 20;

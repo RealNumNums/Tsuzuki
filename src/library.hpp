@@ -62,6 +62,11 @@ void put(const EpisodeProgress& p);
 
 void forget(const std::string& key);
 
+// Drop every part-watched episode. The AniList cache and the pending queue
+// are untouched - this is about clearing the shelf, not disowning anything
+// already reported as watched.
+void forgetAllInProgress();
+
 // Far enough in to be worth resuming, and not so close to the end that
 // resuming would only replay the credits.
 bool worthResuming(const EpisodeProgress& p);
@@ -106,6 +111,11 @@ SyncStatus syncStatus();
 // the same media, keeping the higher progress, so replayed completion events
 // cannot produce duplicate AniList writes.
 void recordWatched(int mediaId, int episode, int totalEpisodes);
+
+// Put a show under Watching on AniList as soon as it is opened, without
+// touching the episode count. Does nothing if the entry is already CURRENT,
+// so opening the same show repeatedly does not queue pointless writes.
+void markWatching(int mediaId);
 
 // Pull AniList into the cache. Runs on its own thread; call from startup or a
 // manual refresh. Newer local progress is never overwritten by an older pull.
