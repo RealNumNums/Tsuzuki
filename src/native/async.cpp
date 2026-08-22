@@ -29,6 +29,9 @@ ui::OpenOutcome g_openResult;
 Slot g_discoverSlot;
 ui::Discovery g_discoverResult;
 
+Slot g_moreSlot;
+ui::MorePage g_moreResult;
+
 std::atomic<bool> g_alive{true};
 
 }  // namespace
@@ -139,6 +142,41 @@ bool takeDiscover(ui::Discovery& out) {
     if (!g_discoverSlot.ready) return false;
     out = std::move(g_discoverResult);
     g_discoverSlot.ready = false;
+    return true;
+}
+
+// -------------------------------------------------------------------- more
+
+void more(const std::string& shelfKey, const std::string& genre, int page) {
+    const int gen = ++g_moreSlot.generation;
+    g_moreSlot.running = true;
+    {
+        std::lock_guard<std::mutex> lock(g_moreSlot.mutex);
+        g_moreSlot.ready = false;
+    }
+
+    std::thread([shelfKey, genre, page, gen] {
+        ui::MorePage out = ui::discoverMore(shelfKey, genre, page);
+        if (!g_alive) return;
+        if (g_moreSlot.generation.load() != gen) return;
+
+        {
+            std::lock_guard<std::mutex> lock(g_moreSlot.mutex);
+            g_moreResult = std::move(out);
+            g_moreSlot.ready = true;
+        }
+        g_moreSlot.running = false;
+        if (g_notify) g_notify();
+    }).detach();
+}
+
+bool moreRunning() { return g_moreSlot.running; }
+
+bool takeMore(ui::MorePage& out) {
+    std::lock_guard<std::mutex> lock(g_moreSlot.mutex);
+    if (!g_moreSlot.ready) return false;
+    out = std::move(g_moreResult);
+    g_moreSlot.ready = false;
     return true;
 }
 

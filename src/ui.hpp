@@ -105,6 +105,7 @@ struct DiscoverItem {
 };
 
 struct Shelf {
+    std::string key;  // so one shelf can be opened and paged through
     std::string title;
     std::vector<DiscoverItem> items;
 };
@@ -115,6 +116,13 @@ struct Discovery {
     std::string error;  // empty when the answer was simply empty
 };
 Discovery discover(const std::string& genre);
+
+// One shelf, one page further in. Page 1 is what the shelf already showed.
+struct MorePage {
+    std::vector<DiscoverItem> items;
+    std::string error;
+};
+MorePage discoverMore(const std::string& shelfKey, const std::string& genre, int page);
 
 // The genres worth offering as filters.
 std::vector<std::string> genreList();

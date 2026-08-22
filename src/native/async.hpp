@@ -34,6 +34,10 @@ void discover(const std::string& genre);
 bool discoverRunning();
 bool takeDiscover(ui::Discovery& out);
 
+void more(const std::string& shelfKey, const std::string& genre, int page);
+bool moreRunning();
+bool takeMore(ui::MorePage& out);
+
 void shutdown();
 
 }  // namespace tsuzuki::async

@@ -114,6 +114,7 @@ std::vector<BrowseItem> browse(const BrowseFilters& f);
 // four-at-once was enough to be refused - which arrived as four empty
 // shelves and looked like "there is nothing to show".
 struct DiscoverShelf {
+    std::string key;  // stable name, so one shelf can be asked for more
     std::string title;
     std::vector<BrowseItem> items;
 };
@@ -122,6 +123,11 @@ struct DiscoverShelf {
 // an genuinely empty answer.
 std::vector<DiscoverShelf> discoverShelves(const std::string& genre, bool allowAdult,
                                            std::string* error);
+
+// One shelf, one page deeper. Same definitions as the batch above, so a
+// shelf and its "see all" can never drift into showing different things.
+std::vector<BrowseItem> shelfPage(const std::string& key, const std::string& genre,
+                                  bool allowAdult, int page, std::string* error);
 
 // Episodes airing in the next `days` days, soonest first.
 struct AiringItem {

@@ -326,14 +326,19 @@ BrowseItem parseBrowseItem(const json& m) {
 
 }  // namespace
 
-std::vector<DiscoverShelf> discoverShelves(const std::string& genre, bool allowAdult,
-                                           std::string* error) {
-    std::vector<DiscoverShelf> out;
-    if (error) error->clear();
+namespace {
 
-    // Current season, so "this season" means what it says.
-    int year = 0;
-    std::string season;
+// Every shelf in one table. The batch query and the "see all" paging both
+// read from here, so a shelf cannot mean one thing on the front page and
+// something else when opened.
+struct ShelfSpec {
+    const char* key;
+    const char* title;
+    std::string args;  // extra arguments to media(), beyond type and genre
+};
+
+std::vector<ShelfSpec> shelfSpecs() {
+    int year = 0, month = 0;
     {
         const std::time_t now = std::time(nullptr);
         std::tm tm{};
@@ -343,33 +348,64 @@ std::vector<DiscoverShelf> discoverShelves(const std::string& genre, bool allowA
         localtime_r(&now, &tm);
 #endif
         year = tm.tm_year + 1900;
-        const int month = tm.tm_mon + 1;
-        season = month <= 3 ? "WINTER" : month <= 6 ? "SPRING" : month <= 9 ? "SUMMER" : "FALL";
+        month = tm.tm_mon + 1;
     }
+    const char* season =
+        month <= 3 ? "WINTER" : month <= 6 ? "SPRING" : month <= 9 ? "SUMMER" : "FALL";
+
+    // The season after this one, rolling into January where it has to.
+    const char* nextSeason = month <= 3    ? "SPRING"
+                             : month <= 6  ? "SUMMER"
+                             : month <= 9  ? "FALL"
+                                           : "WINTER";
+    const int nextYear = month <= 9 ? year : year + 1;
+
+    const std::string thisSeasonArgs = ", sort: POPULARITY_DESC, season: " +
+                                       std::string(season) + ", seasonYear: " +
+                                       std::to_string(year);
+    const std::string nextSeasonArgs = ", sort: POPULARITY_DESC, season: " +
+                                       std::string(nextSeason) + ", seasonYear: " +
+                                       std::to_string(nextYear) +
+                                       ", status: NOT_YET_RELEASED";
+
+    return {
+        {"trending", "Trending now", ", sort: TRENDING_DESC"},
+        {"season", "This season", thisSeasonArgs},
+        {"airing", "Airing now", ", sort: TRENDING_DESC, status: RELEASING"},
+        {"upcoming", "Coming next season", nextSeasonArgs},
+        {"rated", "Highest rated", ", sort: SCORE_DESC"},
+        {"popular", "Most popular of all time", ", sort: POPULARITY_DESC"},
+        {"movies", "Films", ", sort: SCORE_DESC, format: MOVIE"},
+        {"fresh", "Recently started", ", sort: START_DATE_DESC, status: RELEASING"},
+        {"classics", "Classics", ", sort: SCORE_DESC, startDate_lesser: 20100101"},
+    };
+}
+
+const char* kShelfFields =
+    "      id episodes format status seasonYear averageScore genres"
+    "      title { romaji english }"
+    "      coverImage { large color }";
+
+}  // namespace
+
+std::vector<DiscoverShelf> discoverShelves(const std::string& genre, bool allowAdult,
+                                           std::string* error) {
+    std::vector<DiscoverShelf> out;
+    if (error) error->clear();
 
     const std::string genreArg = genre.empty() ? "" : ", genre: $genre";
     const std::string adultArg = allowAdult ? "" : ", isAdult: false";
     const std::string decls = genre.empty() ? "" : "($genre: String)";
 
-    const std::string fields =
-        "      id episodes format status seasonYear averageScore genres"
-        "      title { romaji english }"
-        "      coverImage { large color }";
+    const auto specs = shelfSpecs();
 
-    const auto shelf = [&](const char* alias, const std::string& extra) {
-        return std::string("  ") + alias + ": Page(page: 1, perPage: 24) {" +
-               "    media(type: ANIME" + extra + genreArg + adultArg + ") {" + fields +
-               "    }" + "  }";
-    };
-
-    const std::string gql =
-        "query " + decls + " {" +
-        shelf("trending", ", sort: TRENDING_DESC") +
-        shelf("season", ", sort: POPULARITY_DESC, season: " + season + ", seasonYear: " +
-                            std::to_string(year)) +
-        shelf("rated", ", sort: SCORE_DESC") +
-        shelf("popular", ", sort: POPULARITY_DESC") +
-        "}";
+    std::string gql = "query " + decls + " {";
+    for (const auto& spec : specs) {
+        gql += std::string("  ") + spec.key + ": Page(page: 1, perPage: 24) {" +
+               "    media(type: ANIME" + spec.args + genreArg + adultArg + ") {" +
+               kShelfFields + "    }" + "  }";
+    }
+    gql += "}";
 
     json body;
     body["query"] = gql;
@@ -396,8 +432,7 @@ std::vector<DiscoverShelf> discoverShelves(const std::string& genre, bool allowA
     // A 429 comes back as a normal body with an errors array, not as a
     // transport failure, so it has to be looked for here too.
     if (j.contains("errors") && j["errors"].is_array() && !j["errors"].empty()) {
-        const json& first = j["errors"][0];
-        const std::string msg = first.value("message", "AniList refused the request.");
+        const std::string msg = j["errors"][0].value("message", "AniList refused the request.");
         if (error) {
             *error = msg == "Too Many Requests."
                          ? "AniList is rate limiting us - give it a minute."
@@ -409,23 +444,75 @@ std::vector<DiscoverShelf> discoverShelves(const std::string& genre, bool allowA
     if (!j.contains("data") || !j["data"].is_object()) return out;
     const json& data = j["data"];
 
-    const std::pair<const char*, const char*> shelves[] = {
-        {"trending", "Trending now"},
-        {"season", "This season"},
-        {"rated", "Highest rated"},
-        {"popular", "Most popular of all time"},
-    };
-
-    for (const auto& [alias, label] : shelves) {
-        if (!data.contains(alias) || !data[alias].is_object()) continue;
+    for (const auto& spec : specs) {
+        if (!data.contains(spec.key) || !data[spec.key].is_object()) continue;
         DiscoverShelf s;
-        s.title = label;
-        for (const auto& m : data[alias].value("media", json::array())) {
+        s.key = spec.key;
+        s.title = spec.title;
+        for (const auto& m : data[spec.key].value("media", json::array())) {
             if (!m.is_object()) continue;
             BrowseItem b = parseBrowseItem(m);
             if (b.id) s.items.push_back(std::move(b));
         }
         if (!s.items.empty()) out.push_back(std::move(s));
+    }
+    return out;
+}
+
+std::vector<BrowseItem> shelfPage(const std::string& key, const std::string& genre,
+                                  bool allowAdult, int page, std::string* error) {
+    std::vector<BrowseItem> out;
+    if (error) error->clear();
+
+    std::string args;
+    for (const auto& spec : shelfSpecs()) {
+        if (key == spec.key) args = spec.args;
+    }
+    if (args.empty()) return out;
+
+    const std::string genreArg = genre.empty() ? "" : ", genre: $genre";
+    const std::string adultArg = allowAdult ? "" : ", isAdult: false";
+
+    std::string decls = "($page: Int";
+    if (!genre.empty()) decls += ", $genre: String";
+    decls += ")";
+
+    const std::string gql = "query " + decls + " {" +
+                            "  Page(page: $page, perPage: 30) {" +
+                            "    media(type: ANIME" + args + genreArg + adultArg + ") {" +
+                            kShelfFields + "    }" + "  }" + "}";
+
+    json vars{{"page", page < 1 ? 1 : page}};
+    if (!genre.empty()) vars["genre"] = genre;
+
+    json body;
+    body["query"] = gql;
+    body["variables"] = vars;
+
+    const auto res = post(body.dump(), "");
+    if (!res.ok) {
+        if (error) {
+            *error = res.status == 429 ? "AniList is rate limiting us - give it a minute."
+                                       : "Could not reach AniList.";
+        }
+        return out;
+    }
+
+    try {
+        const json j = json::parse(res.body);
+        if (j.contains("errors") && j["errors"].is_array() && !j["errors"].empty()) {
+            if (error) {
+                *error = j["errors"][0].value("message", "AniList refused the request.");
+            }
+            return out;
+        }
+        for (const auto& m : j["data"]["Page"].value("media", json::array())) {
+            if (!m.is_object()) continue;
+            BrowseItem b = parseBrowseItem(m);
+            if (b.id) out.push_back(std::move(b));
+        }
+    } catch (const std::exception&) {
+        if (error) *error = "AniList sent something unreadable.";
     }
     return out;
 }

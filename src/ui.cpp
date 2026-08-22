@@ -1171,6 +1171,7 @@ Discovery discover(const std::string& genre) {
     std::string error;
     for (const auto& s : anilist::discoverShelves(genre, cfg.showAdult, &error)) {
         Shelf shelf;
+        shelf.key = s.key;
         shelf.title = genre.empty() || s.title != "Highest rated" ? s.title
                                                                  : "Best " + genre;
         for (const auto& b : s.items) {
@@ -1199,6 +1200,25 @@ Discovery discover(const std::string& genre) {
             out.shelves = it->second.shelves;
         }
     }
+    return out;
+}
+
+MorePage discoverMore(const std::string& shelfKey, const std::string& genre, int page) {
+    const Settings cfg = currentSettings();
+    MorePage out;
+    std::string error;
+    for (const auto& b : anilist::shelfPage(shelfKey, genre, cfg.showAdult, page, &error)) {
+        DiscoverItem d;
+        d.id = b.id;
+        d.episodes = b.episodes;
+        d.year = b.year;
+        d.score = b.score;
+        d.title = b.title;
+        d.cover = b.cover;
+        d.format = b.format;
+        out.items.push_back(std::move(d));
+    }
+    out.error = error;
     return out;
 }
 

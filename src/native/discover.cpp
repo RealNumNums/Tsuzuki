@@ -24,6 +24,16 @@ constexpr float kHeaderH = 62;
 constexpr float kGap = 14;
 constexpr float kPosterW = 148;
 
+struct Grid {
+    int cols;
+    float itemW;
+};
+Grid gridFor(float avail, float minW) {
+    int cols = static_cast<int>((avail + kGap) / (minW + kGap));
+    if (cols < 1) cols = 1;
+    return {cols, (avail - kGap * (cols - 1)) / cols};
+}
+
 Font f(float size, gfx::Weight w = gfx::Weight::Regular, gfx::Align a = gfx::Align::Left) {
     Font font;
     font.size = size;
@@ -32,7 +42,125 @@ Font f(float size, gfx::Weight w = gfx::Weight::Regular, gfx::Align a = gfx::Ali
     return font;
 }
 
+// One poster. Returns true when it was clicked.
+bool poster(Ui& u, State& st, int id, Rect tile, const ui::DiscoverItem& item,
+            bool& wantMore) {
+    const bool clicked = u.clickable(id, tile);
+    const float h = u.hover(id);
+    if (h > 0 && h < 1) wantMore = true;
+    if (h > 0) tile = tile.offset(0, -3 * h);
+
+    u.c.fill(tile, gfx::rgb(0x12121A), 10);
+    if (!item.cover.empty()) {
+        if (ID2D1Bitmap* b = images::get(item.cover)) u.c.image(b, tile, 10);
+    }
+    u.c.stroke(tile, h > 0.1f ? accent : line, 10);
+
+    if (item.score > 0) {
+        const Rect badge{tile.right() - 44, tile.y + 8, 36, 20};
+        u.c.fill(badge, shade.withAlpha(0.72f), 5);
+        wchar_t sc[16];
+        swprintf(sc, 16, L"%d%%", item.score);
+        u.c.text(sc, {badge.x, badge.y + 2, badge.w, 16}, item.score >= 75 ? good : fg,
+                 f(11, gfx::Weight::Semibold, gfx::Align::Center));
+    }
+
+    u.c.gradient({tile.x, tile.bottom() - 54, tile.w, 54}, shade.withAlpha(0.0f),
+                 shade.withAlpha(0.86f), 10);
+
+    Font name = f(11.5f, gfx::Weight::Semibold);
+    name.wrap = true;
+    u.c.text(widen(item.title), {tile.x + 8, tile.bottom() - 44, tile.w - 16, 34}, fg, name);
+    return clicked;
+}
+
+// Opening a title hands over to the search that already works.
+void openTitle(State& st, const ui::DiscoverItem& item) {
+    st.query = widen(item.title);
+    st.episodeWanted.clear();
+    st.lastAnilistId = item.id;
+    st.searchDone = false;
+    st.screen = Screen::Results;
+    async::search(item.title, 0);
+}
+
 }  // namespace
+
+// One category, in full, fetching another page as it is scrolled.
+bool shelfScreen(Ui& u, State& st) {
+    const float w = u.c.bounds().w;
+    const float avail = w - kPad * 2;
+    bool wantMore = false;
+
+    {
+        ui::MorePage page;
+        if (async::takeMore(page)) {
+            if (page.items.empty()) {
+                st.openShelfExhausted = true;  // nothing further to ask for
+            } else {
+                st.openShelfItems.insert(st.openShelfItems.end(), page.items.begin(),
+                                         page.items.end());
+            }
+        }
+    }
+
+    float y = kHeaderH + 22 - st.scroll[static_cast<int>(Screen::Shelf)];
+
+    const Rect back{kPad, y, 150, 30};
+    const bool backHot = u.clickable(5000, back);
+    u.c.fill(back, u.hover(5000) > 0.1f ? gfx::rgb(0x22222E) : gfx::rgb(0x16161F), 8);
+    u.c.stroke(back, line, 8);
+    u.c.text(L"< Back to Discover", {back.x, back.y + 6, back.w, 18}, dim,
+             f(12, gfx::Weight::Medium, gfx::Align::Center));
+    if (backHot) {
+        st.screen = Screen::Discover;
+        return true;
+    }
+    y += 44;
+
+    u.c.text(st.openShelfTitle, {kPad, y, avail, 30}, fg, f(21, gfx::Weight::Bold));
+    y += 42;
+
+    const Grid g = gridFor(avail, kPosterW);
+    const float posterH = g.itemW * 1.42f;
+    for (size_t i = 0; i < st.openShelfItems.size(); ++i) {
+        const int col = static_cast<int>(i) % g.cols;
+        const int rowIdx = static_cast<int>(i) / g.cols;
+        const Rect tile{kPad + col * (g.itemW + kGap), y + rowIdx * (posterH + 30), g.itemW,
+                        posterH};
+        if (poster(u, st, 6000 + static_cast<int>(i), tile, st.openShelfItems[i], wantMore)) {
+            openTitle(st, st.openShelfItems[i]);
+            return true;
+        }
+    }
+    const int rows = (static_cast<int>(st.openShelfItems.size()) + g.cols - 1) / g.cols;
+    y += rows * (posterH + 30) + 10;
+
+    if (async::moreRunning()) {
+        u.c.text(L"Loading more...", {kPad, y, avail, 22}, dim,
+                 f(13, gfx::Weight::Regular, gfx::Align::Center));
+        y += 40;
+        wantMore = true;
+    } else if (!st.openShelfExhausted) {
+        const Rect more{u.c.bounds().cx() - 90, y, 180, 38};
+        const bool hot = u.clickable(5001, more);
+        u.c.fill(more, u.hover(5001) > 0.1f ? accentSoft : accent, 9);
+        u.c.text(L"Load more", {more.x, more.y + 10, more.w, 20}, gfx::rgb(0x2A0D18),
+                 f(13, gfx::Weight::Semibold, gfx::Align::Center));
+        if (hot) {
+            ++st.openShelfPage;
+            async::more(st.openShelf, narrow(st.genre), st.openShelfPage);
+        }
+        y += 52;
+    } else {
+        u.c.text(L"That is everything AniList has for this one.",
+                 {kPad, y, avail, 22}, dim, f(12, gfx::Weight::Regular, gfx::Align::Center));
+        y += 40;
+    }
+
+    u.contentHeight = y + st.scroll[static_cast<int>(Screen::Shelf)] + 20;
+    return wantMore;
+}
 
 bool discoverScreen(Ui& u, State& st) {
     const float w = u.c.bounds().w;
@@ -129,6 +257,26 @@ bool discoverScreen(Ui& u, State& st) {
     int id = 5300;
     for (const auto& shelf : st.discovery.shelves) {
         u.c.text(widen(shelf.title), {kPad, y, avail, 24}, fg, f(15.5f, gfx::Weight::Semibold));
+
+        // A shelf shows one row; this is the way into the rest of it.
+        {
+            const Rect all{kPad + avail - 80, y - 3, 80, 24};
+            const bool hot = u.clickable(id++, all);
+            u.c.text(L"See all >", {all.x, all.y + 3, all.w, 18},
+                     u.hover(id - 1) > 0.1f ? accent : dim,
+                     f(12, gfx::Weight::Medium, gfx::Align::Right));
+            if (hot) {
+                st.openShelf = shelf.key;
+                st.openShelfTitle = widen(shelf.title);
+                st.openShelfItems = shelf.items;  // page one, already fetched
+                st.openShelfPage = 1;
+                st.openShelfExhausted = false;
+                st.scroll[static_cast<int>(Screen::Shelf)] = 0;
+                st.scrollTarget[static_cast<int>(Screen::Shelf)] = 0;
+                st.screen = Screen::Shelf;
+                return true;
+            }
+        }
         y += 30;
 
         // One row per shelf, as many as fit. A shelf that wrapped into a block
@@ -137,49 +285,9 @@ bool discoverScreen(Ui& u, State& st) {
         const float posterH = kPosterW * 1.42f;
 
         for (int i = 0; i < perRow && i < static_cast<int>(shelf.items.size()); ++i) {
-            const auto& item = shelf.items[i];
-            Rect tile{kPad + i * (kPosterW + kGap), y, kPosterW, posterH};
-
-            const int tileId = id++;
-            const bool clicked = u.clickable(tileId, tile);
-            const float h = u.hover(tileId);
-            if (h > 0 && h < 1) wantMore = true;
-            if (h > 0) tile = tile.offset(0, -3 * h);
-
-            u.c.fill(tile, gfx::rgb(0x12121A), 10);
-            if (!item.cover.empty()) {
-                if (ID2D1Bitmap* b = images::get(item.cover)) u.c.image(b, tile, 10);
-            }
-            u.c.stroke(tile, h > 0.1f ? accent : line, 10);
-
-            // Score badge, top right, only when AniList has one.
-            if (item.score > 0) {
-                const Rect badge{tile.right() - 44, tile.y + 8, 36, 20};
-                u.c.fill(badge, shade.withAlpha(0.72f), 5);
-                wchar_t s[16];
-                swprintf(s, 16, L"%d%%", item.score);
-                u.c.text(s, {badge.x, badge.y + 2, badge.w, 16},
-                         item.score >= 75 ? good : fg,
-                         f(11, gfx::Weight::Semibold, gfx::Align::Center));
-            }
-
-            u.c.gradient({tile.x, tile.bottom() - 54, tile.w, 54}, shade.withAlpha(0.0f),
-                         shade.withAlpha(0.86f), 10);
-
-            Font name = f(11.5f, gfx::Weight::Semibold);
-            name.wrap = true;
-            u.c.text(widen(item.title), {tile.x + 8, tile.bottom() - 44, tile.w - 16, 34}, fg,
-                     name);
-
-            if (clicked) {
-                // Straight into the search that already knows how to find a
-                // release and pick an episode.
-                st.query = widen(item.title);
-                st.episodeWanted.clear();
-                st.lastAnilistId = item.id;
-                st.searchDone = false;
-                st.screen = Screen::Results;
-                async::search(item.title, 0);
+            const Rect tile{kPad + i * (kPosterW + kGap), y, kPosterW, posterH};
+            if (poster(u, st, id++, tile, shelf.items[i], wantMore)) {
+                openTitle(st, shelf.items[i]);
                 return true;
             }
         }

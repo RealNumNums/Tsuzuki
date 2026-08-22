@@ -94,7 +94,14 @@ std::vector<Service*> g_services;
 
 std::vector<Service*> all() {
     if (g_services.empty()) {
-        g_services = {&g_anilist, malService(), simklService(), kitsuService()};
+        // Only AniList for now, by choice rather than because the others do
+        // not work - MyAnimeList links and syncs, Simkl and Kitsu are written
+        // and waiting. Put them back by restoring the line below; their code,
+        // their settings rows and any stored tokens are all still here, so
+        // nothing has to be set up again.
+        //
+        //   g_services = {&g_anilist, malService(), simklService(), kitsuService()};
+        g_services = {&g_anilist};
     }
     return g_services;
 }

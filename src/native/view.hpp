@@ -72,7 +72,7 @@ class Ui {
 };
 
 // Which screen is showing. The window owns this; screens ask to change it.
-enum class Screen { Home, Results, Episodes, Settings, Player, Discover };
+enum class Screen { Home, Results, Episodes, Settings, Player, Discover, Shelf };
 
 // Everything the interface needs that is not in the engine already.
 struct State {
@@ -98,9 +98,9 @@ struct State {
     // be (target) and where the view actually is (scroll), which eases
     // towards it. contentH is the last measured height, kept so a wheel
     // event can be clamped the moment it arrives rather than a frame later.
-    float scroll[6] = {0, 0, 0, 0, 0, 0};
-    float scrollTarget[6] = {0, 0, 0, 0, 0, 0};
-    float contentH[6] = {0, 0, 0, 0, 0, 0};
+    float scroll[7] = {0, 0, 0, 0, 0, 0, 0};
+    float scrollTarget[7] = {0, 0, 0, 0, 0, 0, 0};
+    float contentH[7] = {0, 0, 0, 0, 0, 0, 0};
 
     // Settings are edited against a draft and written back a moment after
     // the last change, so holding a key does not rewrite the file each time.
@@ -123,6 +123,13 @@ struct State {
     ui::Discovery discovery;
     bool discoverLoaded = false;
     std::wstring genre;
+
+    // A single shelf opened in full, paged as it is scrolled.
+    std::string openShelf;
+    std::wstring openShelfTitle;
+    std::vector<ui::DiscoverItem> openShelfItems;
+    int openShelfPage = 1;
+    bool openShelfExhausted = false;
 
     // Linking a tracker. Simkl shows a code to type in on its site; Kitsu
     // has no consent page and asks here. Both need somewhere to live while
@@ -153,6 +160,7 @@ bool episodesScreen(Ui&, State&);
 
 // Defined in discover.cpp.
 bool discoverScreen(Ui&, State&);
+bool shelfScreen(Ui&, State&);
 
 // Defined in waiting.cpp - the panel shown while an episode gets ready.
 bool waitingPanel(Ui&, State&, const std::wstring& heading);

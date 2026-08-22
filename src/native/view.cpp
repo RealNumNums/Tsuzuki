@@ -551,6 +551,7 @@ bool frame(Ui& u, State& st) {
         case Screen::Results: wantMore = resultsScreen(u, st); break;
         case Screen::Episodes: wantMore = episodesScreen(u, st); break;
         case Screen::Discover: wantMore = discoverScreen(u, st); break;
+        case Screen::Shelf: wantMore = shelfScreen(u, st); break;
         default: break;
     }
 
