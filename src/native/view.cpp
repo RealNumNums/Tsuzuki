@@ -112,19 +112,32 @@ float heroBanner(Ui& u, State& st, float top, bool& wantMore) {
 
     // Tall enough to be the picture, short enough that what is underneath
     // still peeks and says the page scrolls.
-    const float heroH = (std::max)(340.0f, (std::min)(winH * 0.74f, 640.0f));
-    const Rect band{0, top, w, heroH};
+    const float heroH = (std::max)(340.0f, (std::min)(winH * 0.78f, 700.0f));
+    // Reaches back under the navigation rail. The rail is drawn over the top
+    // of it and lets it through, so the picture covers the window rather than
+    // starting at an edge partway across it.
+    const Rect band{-kRailW, top, w + kRailW, heroH};
 
-    u.c.fill(band, gfx::rgb(0x0E0E14));
-    const std::string art = st.hero.banner.empty() ? st.hero.cover : st.hero.banner;
-    if (ID2D1Bitmap* bmp = images::get(art)) u.c.image(bmp, band);
+    // The picture is drawn taller than the banner and faded out across the
+    // whole of it, so it keeps going behind the rows underneath rather than
+    // stopping at an edge. Fading the banner to the page colour and then
+    // starting a second, separately-faded copy below it cannot line up - the
+    // two gradients meet at different values and leave a visible step.
+    constexpr float kBleed = 300;
+    const Rect art{band.x, band.y, band.w, band.h + kBleed};
 
-    // A soft wash from the left for the words, and the fade into the page
-    // along the bottom that the layout needs anyway.
-    u.c.gradientH({band.x, band.y, w * 0.55f, band.h}, shade.withAlpha(0.62f),
+    u.c.fill(art, gfx::rgb(0x0E0E14));
+    const std::string url = st.hero.banner.empty() ? st.hero.cover : st.hero.banner;
+    if (ID2D1Bitmap* bmp = images::get(url)) u.c.image(bmp, art);
+
+    // A soft wash from the left for the words, and one continuous fade into
+    // the page that starts partway down the banner and finishes below it.
+    // Across the whole picture, not just the banner's share of it - stopping
+    // it at the banner's edge leaves a horizontal line where the wash ends.
+    u.c.gradientH({art.x, art.y, art.w * 0.55f, art.h}, shade.withAlpha(0.62f),
                   shade.withAlpha(0.0f));
-    u.c.gradient({band.x, band.bottom() - band.h * 0.55f, band.w, band.h * 0.55f},
-                 bg.withAlpha(0.0f), bg);
+    const float fadeTop = band.y + band.h * 0.42f;
+    u.c.gradient({art.x, fadeTop, art.w, art.bottom() - fadeTop}, bg.withAlpha(0.0f), bg);
 
     // ---- laid out upwards from the bottom edge ---------------------------
     const float bottom = band.bottom();
@@ -421,8 +434,11 @@ bool navRail(Ui& u, State& st, RailTip& tip) {
     const float h = u.c.bounds().h;
     bool wantMore = false;
 
-    u.c.fill({0, 0, kRailW, h}, panel);
-    u.c.fill({kRailW - 1, 0, 1, h}, line);
+    // Translucent, so whatever is behind it - usually the banner - carries on
+    // through. Over a plain background it reads as a slightly darker strip,
+    // which is what it used to be anyway.
+    u.c.fill({0, 0, kRailW, h}, panel.withAlpha(0.62f));
+    u.c.fill({kRailW - 1, 0, 1, h}, line.withAlpha(0.45f));
 
     // The mark, which doubles as the way home.
     {
@@ -722,7 +738,9 @@ bool home(Ui& u, State& st) {
 
     // From the very top of the pane, not from under the header - the header
     // draws over it, fading in as this scrolls away.
-    const float heroH = heroBanner(u, st, -st.scroll[0], wantMore);
+    const float heroTop = -st.scroll[0];
+    const float heroH = heroBanner(u, st, heroTop, wantMore);
+
     float y = (heroH > 0 ? heroH + 22 : kHeaderH + 40) - st.scroll[0];
 
     if (heroH == 0) {
@@ -975,20 +993,22 @@ bool frame(Ui& u, State& st) {
         return more;
     }
 
-    // The rail is drawn in window coordinates; everything after the origin
-    // moves is laid out as though the window began beside it.
+    // The origin moves first and the rail is drawn last, over the top. Drawn
+    // first it would be painted under the banner - and the point is for the
+    // banner to show through it.
     RailTip tip;
-    wantMore |= navRail(u, st, tip);
     u.pushOrigin(kRailW, 0);
 
     // Content first, clipped to its own area, then the header painted over
     // the top. Without the clip, a scrolled page drew its rows straight
     // through the header and the two overlapped.
     const Rect full = u.c.bounds();
-    // Clipped to the whole pane rather than to below the header: the banner
-    // has to be able to reach the top of the window. Clicks are still kept out
-    // of the header's band by hitTop.
-    u.c.pushClip({0, 0, full.w, full.h});
+    // Clipped to the whole window rather than to the pane below the header:
+    // the banner has to reach the top edge, and back under the rail. Nothing
+    // else draws that far left - every other screen starts at kPad - and the
+    // rail paints over the strip afterwards regardless. Clicks are still kept
+    // out of the header's band by hitTop.
+    u.c.pushClip({-kRailW, 0, full.w + kRailW, full.h});
     u.hitTop = kHeaderH;
 
     switch (st.screen) {
@@ -1033,6 +1053,7 @@ bool frame(Ui& u, State& st) {
     }
 
     u.popOrigin();
+    wantMore |= navRail(u, st, tip);
     drawMascot(u, st);
     railTooltip(u, tip);
     u.endFrame();
