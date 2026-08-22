@@ -50,12 +50,14 @@ struct FormatKey {
     int align;
     bool wrap;
     float lineHeight;
+    bool icon;
     bool operator<(const FormatKey& o) const {
         if (size != o.size) return size < o.size;
         if (weight != o.weight) return weight < o.weight;
         if (align != o.align) return align < o.align;
         if (wrap != o.wrap) return wrap < o.wrap;
-        return lineHeight < o.lineHeight;
+        if (lineHeight != o.lineHeight) return lineHeight < o.lineHeight;
+        return icon < o.icon;
     }
 };
 std::map<FormatKey, IDWriteTextFormat*> g_formats;
@@ -210,9 +212,23 @@ void Canvas::resize(unsigned, unsigned) {
     height_ = static_cast<float>(pxH) / scale_;
 }
 
+void Canvas::pushOrigin(float x, float y) {
+    originX_ += x;
+    originY_ += y;
+    if (ctx_) ctx_->SetTransform(D2D1::Matrix3x2F::Translation(originX_, originY_));
+}
+
+void Canvas::popOrigin() {
+    originX_ = 0;
+    originY_ = 0;
+    if (ctx_) ctx_->SetTransform(D2D1::Matrix3x2F::Identity());
+}
+
 bool Canvas::begin(Color clear) {
     if (!ctx_ && !createTarget()) return false;
     clipDepth_ = 0;
+    originX_ = originY_ = 0;
+    ctx_->SetTransform(D2D1::Matrix3x2F::Identity());
     ctx_->BeginDraw();
     ctx_->Clear(toD2D(clear));
     return true;
@@ -275,16 +291,24 @@ void Canvas::gradient(const Rect& r, Color top, Color bottom, float radius) {
 }
 
 IDWriteTextFormat* Canvas::format(const Font& f) {
-    const FormatKey key{f.size, static_cast<int>(f.weight), static_cast<int>(f.align), f.wrap,
-                        f.lineHeight};
+    const FormatKey key{f.size,       static_cast<int>(f.weight), static_cast<int>(f.align),
+                        f.wrap,        f.lineHeight,               f.icon};
     const auto it = g_formats.find(key);
     if (it != g_formats.end()) return it->second;
 
     IDWriteTextFormat* fmt = nullptr;
-    if (FAILED(g_write->CreateTextFormat(L"Segoe UI", nullptr, weightOf(f.weight),
+    // Windows 11 has the Fluent set; on 10 the name misses and DirectWrite
+    // falls back, so ask for MDL2 explicitly rather than getting Segoe UI.
+    const wchar_t* family = f.icon ? L"Segoe Fluent Icons" : L"Segoe UI";
+    if (FAILED(g_write->CreateTextFormat(family, nullptr, weightOf(f.weight),
                                          DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                                          f.size, L"en-us", &fmt))) {
-        return nullptr;
+        if (!f.icon) return nullptr;
+        if (FAILED(g_write->CreateTextFormat(L"Segoe MDL2 Assets", nullptr, weightOf(f.weight),
+                                             DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                                             f.size, L"en-us", &fmt))) {
+            return nullptr;
+        }
     }
     fmt->SetTextAlignment(f.align == Align::Center   ? DWRITE_TEXT_ALIGNMENT_CENTER
                           : f.align == Align::Right ? DWRITE_TEXT_ALIGNMENT_TRAILING

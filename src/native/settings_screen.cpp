@@ -66,7 +66,7 @@ int segmented(Ui& u, int id, const Rect& r, const wchar_t* const* labels, const 
 // Editable text. Focus lives in State so exactly one field has it at a time.
 void field(Ui& u, State& st, int id, const Rect& r, std::wstring& value,
            const wchar_t* placeholder, bool secret = false) {
-    const bool over = r.contains(u.in.mouseX, u.in.mouseY);
+    const bool over = r.contains(u.mouseX(), u.mouseY());
     if (u.in.mousePressed && over) st.focusField = id;
     else if (u.in.mousePressed && !over && st.focusField == id) st.focusField = 0;
 

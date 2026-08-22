@@ -59,6 +59,17 @@ class Ui {
     // the header, where it is clipped away visually - it must not keep
     // taking clicks it no longer appears to be under.
     float hitTop = 0;
+
+    // Moves the whole frame - drawing, reported bounds and the mouse - so a
+    // screen can be written as though the window started at (x, y). The
+    // navigation rail uses it; screens are unaware of it.
+    void pushOrigin(float x, float y);
+    void popOrigin();
+
+    // The pointer in the current origin's coordinates. Anything hit-testing by
+    // hand rather than through clickable() wants these, not in.mouseX/Y.
+    float mouseX() const { return in.mouseX - originX_; }
+    float mouseY() const { return in.mouseY - originY_; }
     // 0..1, eased - drives the hover lift without a separate animation system.
     float hover(int id) const;
 
@@ -67,6 +78,7 @@ class Ui {
     bool wantsAnimation() const { return animating_; }
 
   private:
+    float originX_ = 0, originY_ = 0;
     int hot_ = 0;
     int pressed_ = 0;
     std::vector<std::pair<int, float>> hoverAmount_;

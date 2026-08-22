@@ -78,7 +78,20 @@ struct Font {
     bool ellipsis = true;   // trim with "..." instead of overflowing
     bool wrap = false;      // multi-line
     float lineHeight = 0;   // 0 = font default
+    // Icons come from the system icon font rather than from bitmaps, so they
+    // stay sharp at any scaling and cost nothing to ship.
+    bool icon = false;
 };
+
+// Glyphs in Segoe Fluent Icons, which ships with Windows 11 (and falls back to
+// Segoe MDL2 Assets, which ships with 10). Named so the call sites read as
+// something other than magic numbers.
+namespace icons {
+inline constexpr wchar_t home[] = L"";
+inline constexpr wchar_t compass[] = L"";
+inline constexpr wchar_t calendar[] = L"";
+inline constexpr wchar_t settings[] = L"";
+}  // namespace icons
 
 // Device-independent startup. Call once.
 bool init();
@@ -97,7 +110,15 @@ class Canvas {
     void end();
 
     float dpiScale() const { return scale_; }
-    Rect bounds() const { return {0, 0, width_, height_}; }
+    // Shrinks by the current origin, so a screen laying out against bounds()
+    // fills the space it was actually given rather than the whole window.
+    Rect bounds() const { return {0, 0, width_ - originX_, height_ - originY_}; }
+
+    // Draws everything after this shifted right and down, so a screen can be
+    // written as though the window started here. Without it, giving the window
+    // a navigation rail would mean an inset added by hand in every screen.
+    void pushOrigin(float x, float y);
+    void popOrigin();
 
     void fill(const Rect&, Color, float radius = 0);
     void stroke(const Rect&, Color, float radius = 0, float width = 1);
@@ -128,6 +149,7 @@ class Canvas {
     ID2D1Bitmap1* backBuffer_ = nullptr;
     ID2D1SolidColorBrush* brush_ = nullptr;
     float width_ = 0, height_ = 0;
+    float originX_ = 0, originY_ = 0;
     float scale_ = 1.0f;
     int clipDepth_ = 0;
 };

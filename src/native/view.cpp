@@ -18,6 +18,9 @@ using namespace gfx::theme;
 // can be re-proportioned from one place.
 constexpr float kPad = 26;        // page margin
 constexpr float kHeaderH = 62;
+// The navigation rail down the left edge. Everything else is laid out as
+// though the window started here.
+constexpr float kRailW = 64;
 constexpr float kGap = 14;
 constexpr float kCardW = 268;     // continue-watching card
 constexpr float kTileW = 152;     // poster tile
@@ -294,8 +297,23 @@ void Ui::endFrame() {
     if (in.mouseReleased) pressed_ = 0;
 }
 
+void Ui::pushOrigin(float x, float y) {
+    originX_ += x;
+    originY_ += y;
+    c.pushOrigin(x, y);
+}
+
+void Ui::popOrigin() {
+    originX_ = originY_ = 0;
+    c.popOrigin();
+}
+
 bool Ui::clickable(int id, const Rect& r) {
-    const bool over = r.contains(in.mouseX, in.mouseY) && in.mouseY >= hitTop;
+    // The mouse arrives in window coordinates; everything else in this frame
+    // is in the current origin's coordinates.
+    const float mx = in.mouseX - originX_;
+    const float my = in.mouseY - originY_;
+    const bool over = r.contains(mx, my) && my >= hitTop;
     if (over) hot_ = id;
 
     // Ease the hover value towards its target so cards lift smoothly instead
@@ -325,9 +343,106 @@ float Ui::hover(int id) const {
     return it == hoverAmount_.end() ? 0.0f : it->second;
 }
 
-// ---------------------------------------------------------------- header
+// ------------------------------------------------------------------- rail
 
 namespace {
+
+// The navigation rail down the left edge.
+//
+// Destinations live here rather than in the header because they are the one
+// thing on screen that never changes, and a vertical rail gives the content
+// its full width back. Drawn before the origin is moved, so it works in
+// window coordinates while everything else works inset by kRailW.
+// What the rail wants drawn on top of everything else once the frame is
+// otherwise done. The rail itself is painted first, before the origin moves,
+// which meant its tooltip was painted before the content and disappeared
+// underneath it.
+struct RailTip {
+    const wchar_t* label = nullptr;
+    float y = 0;
+};
+
+bool navRail(Ui& u, State& st, RailTip& tip) {
+    const float h = u.c.bounds().h;
+    bool wantMore = false;
+
+    u.c.fill({0, 0, kRailW, h}, gfx::rgb(0x0C0C12));
+    u.c.fill({kRailW - 1, 0, 1, h}, line);
+
+    // The mark, which doubles as the way home.
+    {
+        const Rect logo{(kRailW - 32) / 2, 16, 32, 32};
+        const bool hot = u.clickable(9100, logo);
+        u.c.gradient(logo, accent, gfx::rgb(0xB0295A), 9);
+        u.c.text(L"続", {logo.x, logo.y + 6, logo.w, 22}, gfx::rgb(0xFFFFFF),
+                 f(15, gfx::Weight::Bold, gfx::Align::Center));
+        if (hot) st.screen = Screen::Home;
+    }
+
+    struct Item {
+        const wchar_t* glyph;
+        const wchar_t* label;
+        Screen screen;
+    };
+    const Item items[] = {{gfx::icons::home, L"Home", Screen::Home},
+                          {gfx::icons::compass, L"Discover", Screen::Discover},
+                          {gfx::icons::calendar, L"Schedule", Screen::Schedule},
+                          {gfx::icons::settings, L"Settings", Screen::Settings}};
+
+    Font glyphFont = f(17, gfx::Weight::Regular, gfx::Align::Center);
+    glyphFont.icon = true;
+
+    for (int i = 0; i < 4; ++i) {
+        // Settings sits at the foot of the rail: it is the one destination you
+        // are not moving between, so it should not be in the flow of the rest.
+        const bool last = i == 3;
+        const float top = last ? h - 62 : 76 + i * 50;
+        const Rect pill{(kRailW - 42) / 2, top, 42, 40};
+
+        const bool on = st.screen == items[i].screen ||
+                        (items[i].screen == Screen::Discover && st.screen == Screen::Shelf);
+        const bool hot = u.clickable(9110 + i, pill);
+        const float hv = u.hover(9110 + i);
+        if (hv > 0 && hv < 1) wantMore = true;
+
+        if (on) {
+            u.c.fill(pill, accent, 11);
+        } else if (hv > 0.05f) {
+            u.c.fill(pill, gfx::rgb(0x1C1C26).withAlpha(hv), 11);
+        }
+        u.c.text(items[i].glyph, {pill.x, pill.y + 11, pill.w, 22},
+                 on ? gfx::rgb(0x2A0D18) : (hv > 0.1f ? fg : gfx::rgb(0x8A8A9A)), glyphFont);
+
+        // The label only appears when you go looking for it, so the rail stays
+        // as quiet as the reference it is modelled on. Drawn later, on top.
+        if (hv > 0.6f && !on) {
+            tip.label = items[i].label;
+            tip.y = pill.y + 9;
+        }
+
+        if (hot) {
+            st.screen = items[i].screen;
+            st.queryFocused = false;
+            st.focusField = 0;
+            if (items[i].screen == Screen::Settings) st.draftLoaded = false;
+        }
+    }
+
+    return wantMore;
+}
+
+// Painted after everything else, so nothing can cover it.
+void railTooltip(Ui& u, const RailTip& tip) {
+    if (!tip.label) return;
+    const float tw = static_cast<float>(wcslen(tip.label)) * 6.8f + 20;
+    const Rect box{kRailW + 8, tip.y, tw, 24};
+    u.c.fill(box, gfx::rgb(0x1E1E28), 6);
+    u.c.stroke(box, line, 6);
+    u.c.text(tip.label, {box.x, box.y + 4, box.w, 16}, fg,
+             f(11.5f, gfx::Weight::Medium, gfx::Align::Center));
+}
+
+// ---------------------------------------------------------------- header
 
 // Returns true if a search was submitted.
 bool header(Ui& u, State& st) {
@@ -337,13 +452,10 @@ bool header(Ui& u, State& st) {
     u.c.fill({0, 0, w, kHeaderH}, gfx::rgb(0x0E0E14));
     u.c.fill({0, kHeaderH - 1, w, 1}, line);
 
-    // Wordmark
-    u.c.text(L"Tsuzuki", {kPad, 20, 110, 24}, fg, f(17, gfx::Weight::Bold));
-    u.c.text(L"続き", {kPad + 78, 24, 60, 20}, accent.withAlpha(0.85f), f(13));
-
-    // Search field
-    const Rect box{kPad + 150, 14, w - kPad * 2 - 150 - 580, 34};
-    const bool overBox = box.contains(u.in.mouseX, u.in.mouseY);
+    // Search field. It has the header to itself now that the destinations
+    // moved to the rail.
+    const Rect box{kPad, 14, w - kPad * 2 - 180, 34};
+    const bool overBox = box.contains(u.mouseX(), u.mouseY());
     if (u.in.mousePressed) st.queryFocused = overBox;
     u.c.fill(box, gfx::rgb(0x16161F), 9);
     u.c.stroke(box, st.queryFocused ? accent : line, 9);
@@ -374,32 +486,6 @@ bool header(Ui& u, State& st) {
     u.c.text(L"Search", {go.x, go.y + 8, go.w, 20}, gfx::rgb(0x2A0D18),
              f(13.5f, gfx::Weight::Semibold, gfx::Align::Center));
     if (hot) submit = true;
-
-    // Navigation. Two destinations for now, and the current one is marked
-    // so the window never leaves you guessing where you are.
-    struct NavItem { const wchar_t* label; Screen screen; float width; };
-    const NavItem nav[] = {{L"Home", Screen::Home, 62},
-                           {L"Discover", Screen::Discover, 82},
-                           {L"Schedule", Screen::Schedule, 84},
-                           {L"Settings", Screen::Settings, 84}};
-    float navX = go.right() + 16;
-    for (int i = 0; i < 4; ++i) {
-        const Rect item{navX, 14, nav[i].width, 34};
-        const bool on = st.screen == nav[i].screen;
-        const bool over = u.clickable(9010 + i, item);
-        if (on || u.hover(9010 + i) > 0.05f) {
-            u.c.fill(item, on ? gfx::rgb(0x22222E) : gfx::rgb(0x1A1A24), 8);
-        }
-        u.c.text(nav[i].label, {item.x, item.y + 8, item.w, 20}, on ? fg : dim,
-                 f(13, on ? gfx::Weight::Semibold : gfx::Weight::Regular, gfx::Align::Center));
-        if (over) {
-            st.screen = nav[i].screen;
-            st.queryFocused = false;
-            st.focusField = 0;
-            if (nav[i].screen == Screen::Settings) st.draftLoaded = false;
-        }
-        navX += nav[i].width + 6;
-    }
 
     if (st.queryFocused) {
         if (!u.in.typed.empty()) {
@@ -746,6 +832,12 @@ bool frame(Ui& u, State& st) {
         return more;
     }
 
+    // The rail is drawn in window coordinates; everything after the origin
+    // moves is laid out as though the window began beside it.
+    RailTip tip;
+    wantMore |= navRail(u, st, tip);
+    u.pushOrigin(kRailW, 0);
+
     // Content first, clipped to its own area, then the header painted over
     // the top. Without the clip, a scrolled page drew its rows straight
     // through the header and the two overlapped.
@@ -786,6 +878,8 @@ bool frame(Ui& u, State& st) {
         }
     }
 
+    u.popOrigin();
+    railTooltip(u, tip);
     u.endFrame();
     return wantMore || u.wantsAnimation();
 }
