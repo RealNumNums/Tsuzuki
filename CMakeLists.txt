@@ -34,6 +34,7 @@ add_library(tsuzuki_core STATIC
   src/track.cpp
   src/discord.cpp
   src/library.cpp
+  src/tracks.cpp
   src/native/gfx.cpp
   src/native/images.cpp
   src/native/view.cpp
@@ -87,6 +88,13 @@ endif()
 if(WIN32)
   target_compile_definitions(tsuzuki_core PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
+
+# Track choice is pure logic over a list of tracks, so it can be tested without
+# mpv, a torrent or a window. Build and run tests/test_tracks.
+add_executable(test_tracks tests/test_tracks.cpp src/tracks.cpp)
+target_include_directories(test_tracks PRIVATE src)
+enable_testing()
+add_test(NAME tracks COMMAND test_tracks)
 
 if(MSVC)
   target_compile_options(tsuzuki_core PRIVATE /utf-8 /W4)

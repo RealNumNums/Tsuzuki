@@ -2,6 +2,7 @@
 
 #include "library.hpp"
 #include "settings.hpp"
+#include "tracks.hpp"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -628,6 +629,9 @@ void playFile(Engine& e, int index) {
         cmd += " --no-border --osc=no --keep-open=no";
     }
     cmd += " --input-ipc-server=" + player::pipeName();
+    // A first guess for mpv to open with; the tracks are looked at properly
+    // once it reports them, because a language tag alone cannot tell a full
+    // subtitle track from a signs-and-songs one.
     if (!cfg.audioLang.empty()) cmd += " --alang=" + cfg.audioLang;
     if (!cfg.subLang.empty()) cmd += " --slang=" + cfg.subLang;
     cmd += cfg.subsOn ? " --sub-visibility=yes" : " --sub-visibility=no";
@@ -729,6 +733,7 @@ void playFile(Engine& e, int index) {
     double lastSample = 0;
     bool wasPaused = false, sampled = false;
     DWORD lastPresence = 0;
+    bool tracksChosen = false;
     // A silent IPC failure used to look exactly like a normal watch: the video
     // played, and nothing else worked. Notice it and say so instead.
     const auto playbackStart = std::chrono::steady_clock::now();
@@ -752,6 +757,21 @@ void playFile(Engine& e, int index) {
             continue;
         }
         everConnected = true;
+
+        // Done once, the first time mpv reports a track list. Re-running it
+        // every tick would fight anyone who changed track by hand.
+        if (!tracksChosen && !ps.tracks.empty()) {
+            tracksChosen = true;
+            const tracks::Choice pick =
+                tracks::choose(ps.tracks, cfg.audioLang, cfg.subLang, cfg.subsOn);
+            if (pick.audioId >= 0) player::setAudioTrack(pick.audioId);
+            if (pick.subId == 0) {
+                player::setSubsVisible(false);
+            } else if (pick.subId > 0) {
+                player::setSubTrack(pick.subId);
+                player::setSubsVisible(true);
+            }
+        }
 
         // mpv reports no duration until it has parsed enough of the container,
         // and for a few files never does. Fall back to the runtime AniList
