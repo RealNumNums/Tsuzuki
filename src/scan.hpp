@@ -47,6 +47,11 @@ struct ScannedFile {
 std::vector<ScannedFile> scanFiles(
     const std::vector<std::pair<std::string, std::int64_t>>& files);
 
+// The episode a single release or file name refers to, with no video-file
+// filtering - release names published without an extension are still names,
+// and scanFiles() would drop them.
+Episode episodeFromName(const std::string& name);
+
 // Find the file for `wanted`.
 //
 // Returns nullptr when there is no confident match. That is the whole point:

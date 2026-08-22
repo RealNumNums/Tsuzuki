@@ -22,7 +22,7 @@ void init(Notify);
 // Starting a job while one is running replaces it: the older answer is
 // discarded when it arrives, so a fast second search cannot be overtaken by a
 // slow first one.
-void search(const std::string& query, int resolution);
+void search(const std::string& query, int resolution, int episode = 0);
 bool searchRunning();
 bool takeSearch(ui::SearchOutcome& out);
 

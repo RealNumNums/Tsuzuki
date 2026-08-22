@@ -76,7 +76,14 @@ bool resultsScreen(Ui& u, State& st) {
     const float avail = w - kPad * 2;
     bool wantMore = false;
 
-    if (async::takeSearch(st.results)) st.searchDone = true;
+    if (async::takeSearch(st.results)) {
+        st.searchDone = true;
+        // A narrowed search keeps its episode selected; a fresh one starts
+        // with no filter at all.
+        st.resultsEpisode = st.pendingEpisode;
+        st.resultsEpisodeChosen = st.pendingEpisode != 0;
+        st.pendingEpisode = 0;
+    }
 
     if (async::searchRunning()) {
         busy(u, L"Searching every source for " + st.query + L"...");
@@ -122,8 +129,126 @@ bool resultsScreen(Ui& u, State& st) {
         return false;
     }
 
+    // ---- which episode -------------------------------------------------
+    //
+    // Sources hand back releases ordered by seeders, which for a currently
+    // airing show means the newest episodes fill the screen and episode one
+    // is somewhere near the bottom. Offer the episodes as a list instead.
+    std::vector<int> present;
+    bool anyBatch = false;
+    for (const auto& r : st.results.results) {
+        if (r.isBatch()) {
+            anyBatch = true;
+        } else if (r.episode > 0) {
+            if (std::find(present.begin(), present.end(), r.episode) == present.end()) {
+                present.push_back(r.episode);
+            }
+        }
+    }
+    std::sort(present.begin(), present.end());
+
+    // Offer every episode the show has, not only the ones this page of results
+    // happened to include. An index returns its most-seeded releases first, so
+    // for an airing show the early episodes are simply absent - and a chooser
+    // that only lists what is already on screen cannot get you to them.
+    std::vector<int> episodes = present;
+    if (st.results.episodes > 0) {
+        episodes.clear();
+        for (int e = 1; e <= st.results.episodes; ++e) episodes.push_back(e);
+        for (const int e : present) {
+            if (std::find(episodes.begin(), episodes.end(), e) == episodes.end()) {
+                episodes.push_back(e);
+            }
+        }
+        std::sort(episodes.begin(), episodes.end());
+    }
+
+    // Whatever was typed into the Ep # box, or asked for by a schedule entry,
+    // is what you meant - but only until you pick something else here.
+    if (!st.resultsEpisodeChosen && !st.episodeWanted.empty()) {
+        const int wanted = _wtoi(st.episodeWanted.c_str());
+        if (wanted > 0 &&
+            std::find(episodes.begin(), episodes.end(), wanted) != episodes.end()) {
+            st.resultsEpisode = wanted;
+        }
+    }
+
+    if (episodes.size() > 1 || anyBatch) {
+        float cx = kPad;
+        float cy = y;
+        int chipId = 1600;
+
+        struct Chip {
+            std::wstring label;
+            int value;
+        };
+        std::vector<Chip> chips;
+        chips.push_back({L"All", 0});
+        if (anyBatch) chips.push_back({L"Batch", -1});
+        for (const int e : episodes) {
+            wchar_t s[16];
+            swprintf(s, 16, L"%d", e);
+            chips.push_back({s, e});
+        }
+
+        for (const auto& chip : chips) {
+            const float cw = (std::max)(34.0f, chip.label.size() * 7.6f + 20);
+            if (cx + cw > kPad + avail) {
+                cx = kPad;
+                cy += 34;
+            }
+            const Rect box{cx, cy, cw, 28};
+            const bool on = st.resultsEpisode == chip.value;
+            const bool clicked = u.clickable(chipId, box);
+            const float hv = u.hover(chipId);
+            if (hv > 0 && hv < 1) wantMore = true;
+            ++chipId;
+
+            u.c.fill(box, on ? accent : (hv > 0.1f ? cardHover : card), 14);
+            if (!on) u.c.stroke(box, line, 14);
+            u.c.text(chip.label, {box.x, box.y + 5, box.w, 18},
+                     on ? gfx::onAccent() : (hv > 0.1f ? fg : dim),
+                     f(12.5f, on ? gfx::Weight::Semibold : gfx::Weight::Regular,
+                       gfx::Align::Center));
+
+            if (clicked) {
+                st.resultsEpisode = chip.value;
+                st.resultsEpisodeChosen = true;
+                st.scrollTarget[static_cast<int>(Screen::Results)] = 0;
+
+                // Nothing here for that episode means the broad search never
+                // reached it, so go and ask for it by name.
+                const bool have =
+                    chip.value <= 0 ||
+                    std::find(present.begin(), present.end(), chip.value) != present.end();
+                if (!have) {
+                    const std::string title = st.results.resolvedTitle.empty()
+                                                  ? narrow(st.query)
+                                                  : st.results.resolvedTitle;
+                    st.searchDone = false;
+                    st.pendingEpisode = chip.value;
+                    async::search(title, 0, chip.value);
+                }
+                return true;
+            }
+            cx += cw + 7;
+        }
+        y = cy + 42;
+    }
+
+    int shownRows = 0;
     for (size_t i = 0; i < st.results.results.size(); ++i) {
         const auto& r = st.results.results[i];
+
+        if (st.resultsEpisode == -1 && !r.isBatch()) continue;
+        if (st.resultsEpisode > 0) {
+            // A batch that covers the episode counts as a way to get it.
+            const bool covers = r.isBatch() ? (st.resultsEpisode >= r.episode &&
+                                               st.resultsEpisode <= r.lastEpisode)
+                                            : r.episode == st.resultsEpisode;
+            if (!covers) continue;
+        }
+        ++shownRows;
         const Rect row{kPad, y, avail, 62};
         const int id = 1000 + static_cast<int>(i);
         const bool clicked = u.clickable(id, row);
@@ -155,10 +280,24 @@ bool resultsScreen(Ui& u, State& st) {
             st.lastAnilistId = st.results.anilistId;
             st.openDone = false;
             st.screen = Screen::Episodes;
-            const int wantEp = st.episodeWanted.empty() ? 0 : _wtoi(st.episodeWanted.c_str());
+
+            // The chosen episode, then whatever the row itself is for, then
+            // the Ep # box. Picking "7" and opening a batch has to ask the
+            // batch for 7, not for the first thing in it.
+            int wantEp = st.resultsEpisode > 0 ? st.resultsEpisode : 0;
+            if (!wantEp && !r.isBatch()) wantEp = r.episode;
+            if (!wantEp && !st.episodeWanted.empty()) {
+                wantEp = _wtoi(st.episodeWanted.c_str());
+            }
             async::open(narrow(st.openMagnet), wantEp, st.lastAnilistId);
         }
         y += 62 + 8;
+    }
+
+    if (shownRows == 0) {
+        u.c.text(L"Nothing for that episode. Pick another, or All.",
+                 {kPad, y + 10, avail, 24}, dim, f(13.5f));
+        y += 50;
     }
 
     u.contentHeight = y + st.scroll[static_cast<int>(Screen::Results)] + 20;

@@ -281,8 +281,9 @@ bool scheduleScreen(Ui& u, State& st) {
                 st.episodeWanted = ep;
                 st.lastAnilistId = a.mediaId;
                 st.searchDone = false;
+                st.pendingEpisode = a.episode;
                 st.screen = Screen::Results;
-                async::search(a.title, 0);
+                async::search(a.title, 0, a.episode);
                 return true;
             }
             itemY += 18;

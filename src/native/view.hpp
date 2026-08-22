@@ -85,6 +85,16 @@ class Ui {
     bool animating_ = false;
 };
 
+// The clipboard as text, empty when it holds something else. Ctrl+V arrives
+// as an unprintable control character rather than as the pasted text, so
+// every editable field has to go and fetch it.
+std::wstring clipboardText();
+
+// What Windows puts in the character stream for Ctrl+V. Reading the paste out
+// of the typed characters avoids asking GetKeyState what the keyboard was
+// doing, which is a different question from what was typed into this frame.
+inline constexpr wchar_t kPasteChar = 0x16;
+
 // Which screen is showing. The window owns this; screens ask to change it.
 enum class Screen { Home, Results, Episodes, Settings, Player, Discover, Shelf, Schedule };
 
@@ -97,6 +107,13 @@ struct State {
     bool mascotOn = false;
     std::wstring query;
     std::wstring episodeWanted;
+
+    // Which episode the results are filtered to. Zero shows every release,
+    // -1 shows only batches. Results arrive sorted by seeders, so without
+    // this the early episodes of a running show are buried under the latest.
+    int resultsEpisode = 0;
+    int pendingEpisode = 0;  // the episode an in-flight narrowed search is for
+    bool resultsEpisodeChosen = false;
     bool queryFocused = false;
     int caret = 0;
 

@@ -75,6 +75,12 @@ struct Found {
     long long size = 0;
     int seeders = 0;
     bool curatedBest = false;  // SeaDex says this is the encode to take
+
+    // Parsed from the release name. Zero when it could not be read; `last`
+    // differs from `episode` for a batch covering a range.
+    int episode = 0;
+    int lastEpisode = 0;
+    bool isBatch() const { return lastEpisode > episode; }
 };
 
 struct SearchOutcome {
@@ -86,7 +92,10 @@ struct SearchOutcome {
     std::vector<Found> results;
 };
 
-SearchOutcome search(const std::string& query, int resolution);
+// `episode` of zero searches broadly and lets the results speak for
+// themselves; anything else narrows the query to that episode, for when the
+// broad search did not reach back far enough to include it.
+SearchOutcome search(const std::string& query, int resolution, int episode = 0);
 
 // ---- discovery -------------------------------------------------------
 //

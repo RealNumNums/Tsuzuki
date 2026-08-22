@@ -262,6 +262,28 @@ float heroBanner(Ui& u, State& st, float top, bool& wantMore) {
 
 // ---------------------------------------------------------------- helpers
 
+std::wstring clipboardText() {
+    if (!IsClipboardFormatAvailable(CF_UNICODETEXT)) return {};
+    if (!OpenClipboard(nullptr)) return {};
+
+    std::wstring out;
+    if (HANDLE handle = GetClipboardData(CF_UNICODETEXT)) {
+        if (const wchar_t* text = static_cast<const wchar_t*>(GlobalLock(handle))) {
+            out = text;
+            GlobalUnlock(handle);
+        }
+    }
+    CloseClipboard();
+
+    // A pasted magnet link often arrives with a trailing newline, and a single
+    // line field should not grow a control character it cannot show.
+    for (wchar_t& ch : out) {
+        if (ch == L'\r' || ch == L'\n' || ch == L'\t') ch = L' ';
+    }
+    while (!out.empty() && out.back() == L' ') out.pop_back();
+    return out;
+}
+
 std::wstring widen(const std::string& s) {
     if (s.empty()) return {};
     const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), nullptr, 0);
@@ -549,7 +571,9 @@ bool header(Ui& u, State& st) {
     if (st.queryFocused) {
         if (!u.in.typed.empty()) {
             for (const wchar_t ch : u.in.typed) {
-                if (ch == L'\b') {
+                if (ch == kPasteChar) {
+                    st.query += clipboardText();
+                } else if (ch == L'\b') {
                     if (!st.query.empty()) st.query.pop_back();
                 } else if (ch == L'\r' || ch == L'\n') {
                     submit = true;
@@ -933,7 +957,8 @@ bool frame(Ui& u, State& st) {
         } else {
             st.searchDone = false;
             st.screen = Screen::Results;
-            async::search(narrow(q), 0);
+            st.pendingEpisode = wantEp;
+            async::search(narrow(q), 0, wantEp);
         }
     }
 

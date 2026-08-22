@@ -89,7 +89,9 @@ void field(Ui& u, State& st, int id, const Rect& r, std::wstring& value,
 
     if (focused && !u.in.typed.empty()) {
         for (const wchar_t ch : u.in.typed) {
-            if (ch == L'\b') {
+            if (ch == kPasteChar) {
+                value += clipboardText();
+            } else if (ch == L'\b') {
                 if (!value.empty()) value.pop_back();
             } else if (ch == L'\r' || ch == L'\n' || ch == L'\t') {
                 st.focusField = 0;

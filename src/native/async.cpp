@@ -50,7 +50,7 @@ void shutdown() { g_alive = false; }
 
 // ------------------------------------------------------------------ search
 
-void search(const std::string& query, int resolution) {
+void search(const std::string& query, int resolution, int episode) {
     const int gen = ++g_searchSlot.generation;
     g_searchSlot.running = true;
     {
@@ -58,8 +58,8 @@ void search(const std::string& query, int resolution) {
         g_searchSlot.ready = false;
     }
 
-    std::thread([query, resolution, gen] {
-        ui::SearchOutcome out = ui::search(query, resolution);
+    std::thread([query, resolution, episode, gen] {
+        ui::SearchOutcome out = ui::search(query, resolution, episode);
         if (!g_alive) return;
         if (g_searchSlot.generation.load() != gen) return;  // superseded
 

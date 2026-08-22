@@ -53,11 +53,20 @@ std::string lower(std::string s) {
     return s;
 }
 
-// Query text used against title-based indexes. Episode is deliberately NOT
-// included: releases name episodes inconsistently, so we search broad and let
-// the Anitomy pass in scan.cpp do the precise filtering.
+// Query text used against title-based indexes.
+//
+// Episode is normally left out: releases name episodes inconsistently, so we
+// search broad and let the Anitomy pass in scan.cpp do the precise filtering.
+// The exception is when the caller has asked for one specific episode, which
+// happens after a broad search came back without it - indexes return their
+// most-seeded results first, so for an airing show the early episodes fall off
+// the end of the page and no amount of local filtering can bring them back.
 std::string queryText(const Query& q) {
     std::string text = q.title;
+    if (q.episode && *q.episode > 0) {
+        const int ep = *q.episode;
+        text += ep < 10 ? " 0" + std::to_string(ep) : " " + std::to_string(ep);
+    }
     if (q.season && *q.season > 1) text += " S" + std::string(*q.season < 10 ? "0" : "") +
                                             std::to_string(*q.season);
     if (q.resolution) text += " " + std::to_string(*q.resolution) + "p";

@@ -1061,7 +1061,7 @@ void playFile(Engine& e, int index) {
 
 }  // namespace
 
-SearchOutcome search(const std::string& q, int resolution) {
+SearchOutcome search(const std::string& q, int resolution, int episode) {
     SearchOutcome out;
     if (q.empty()) {
         out.error = "Type something to search for.";
@@ -1071,6 +1071,7 @@ SearchOutcome search(const std::string& q, int resolution) {
     sources::Query query;
     query.title = q;
     if (resolution > 0) query.resolution = resolution;
+    if (episode > 0) query.episode = episode;
 
     const Settings cfg = currentSettings();
     out.autoSelect = cfg.autoSelect;
@@ -1125,6 +1126,14 @@ SearchOutcome search(const std::string& q, int resolution) {
         f.size = r.size;
         f.seeders = r.seeders;
         f.curatedBest = r.curatedBest;
+
+        // Which episode this release is, read out of its name, so the screen
+        // can offer them as a list instead of a wall sorted by seeders.
+        const Episode ep = episodeFromName(r.title);
+        if (ep.valid) {
+            f.episode = ep.from;
+            f.lastEpisode = ep.to;
+        }
         out.results.push_back(std::move(f));
         if (out.results.size() >= 40) break;
     }

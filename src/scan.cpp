@@ -95,6 +95,29 @@ std::string humanSize(std::int64_t bytes) {
 
 }  // namespace
 
+Episode episodeFromName(const std::string& name) {
+    Episode out;
+    anitomy::Anitomy parser;
+    if (!parser.Parse(toWide(name))) return out;
+
+    const auto& el = parser.elements();
+    const auto eps = el.get_all(anitomy::kElementEpisodeNumber);
+    if (eps.empty()) return out;
+
+    const auto first = toInt(eps[0]);
+    if (!first) return out;
+
+    out.from = *first;
+    out.to = *first;
+    out.valid = true;
+    if (eps.size() > 1) {
+        if (const auto second = toInt(eps[1])) {
+            if (*second > *first) out.to = *second;
+        }
+    }
+    return out;
+}
+
 std::vector<ScannedFile> scanFiles(
     const std::vector<std::pair<std::string, std::int64_t>>& files) {
     std::vector<ScannedFile> out;
