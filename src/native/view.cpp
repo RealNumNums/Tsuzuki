@@ -89,6 +89,165 @@ void coverArt(Ui& u, const std::string& url, const Rect& r, float radius) {
     }
 }
 
+// The banner across the top of the home screen.
+//
+// It leads with whatever you would actually watch next rather than something
+// trending, so the biggest thing on the screen is also the most useful button
+// on it. Returns the height it drew, which is zero before AniList answers.
+float heroBanner(Ui& u, State& st, float top, bool& wantMore) {
+    if (st.hero.id == 0 || st.hero.id != st.heroWant) return 0;
+
+    const float w = u.c.bounds().w;
+    constexpr float kHeroH = 330;
+    const Rect band{0, top, w, kHeroH};
+
+    // Artwork first, then enough shading over it that text stays readable on
+    // whatever happens to be underneath.
+    u.c.fill(band, gfx::rgb(0x0E0E14));
+    const std::string art = st.hero.banner.empty() ? st.hero.cover : st.hero.banner;
+    if (ID2D1Bitmap* bmp = images::get(art)) u.c.image(bmp, band);
+
+    u.c.gradient(band, shade.withAlpha(0.30f), shade.withAlpha(0.94f));
+    u.c.gradient({band.x, band.bottom() - 120, band.w, 120}, bg.withAlpha(0.0f), bg);
+
+    const float textW = std::min(620.0f, w - kPad * 2);
+    float ty = band.y + 52;
+
+    // ---- title ----------------------------------------------------------
+    Font title = f(31, gfx::Weight::Bold);
+    title.wrap = true;
+    const std::wstring name = widen(st.hero.title);
+    const float titleH = std::min(84.0f, u.c.measure(name, textW, title));
+    u.c.text(name, {kPad, ty, textW, titleH}, fg, title);
+    ty += titleH + 12;
+
+    // ---- the facts, as chips --------------------------------------------
+    {
+        float cx = kPad;
+        std::vector<std::wstring> chips;
+        if (st.hero.score > 0) {
+            wchar_t s[16];
+            swprintf(s, 16, L"%d%%", st.hero.score);
+            chips.push_back(s);
+        }
+        if (!st.hero.format.empty()) chips.push_back(widen(st.hero.format));
+        if (st.hero.episodes > 0) {
+            wchar_t s[24];
+            swprintf(s, 24, L"%d episodes", st.hero.episodes);
+            chips.push_back(s);
+        }
+        if (st.hero.year > 0) {
+            wchar_t s[12];
+            swprintf(s, 12, L"%d", st.hero.year);
+            chips.push_back(s);
+        }
+        if (st.hero.status == "RELEASING") chips.push_back(L"Airing");
+
+        for (size_t i = 0; i < chips.size(); ++i) {
+            const float pillW = static_cast<float>(chips[i].size()) * 6.6f + 18;
+            const Rect pill{cx, ty, pillW, 22};
+            const bool isScore = i == 0 && st.hero.score > 0;
+            u.c.fill(pill, isScore ? accent.withAlpha(0.18f) : gfx::rgb(0x1A1A24).withAlpha(0.85f),
+                     11);
+            u.c.stroke(pill, isScore ? accent.withAlpha(0.5f) : line, 11);
+            u.c.text(chips[i], {pill.x, pill.y + 3, pill.w, 16},
+                     isScore ? accent : gfx::rgb(0xC8C8D4),
+                     f(11.5f, gfx::Weight::Semibold, gfx::Align::Center));
+            cx += pillW + 7;
+        }
+        ty += 34;
+    }
+
+    // ---- what it is about ------------------------------------------------
+    if (!st.hero.description.empty()) {
+        Font body = f(13);
+        body.wrap = true;
+        u.c.text(widen(st.hero.description), {kPad, ty, textW, 60}, gfx::rgb(0xB4B4C2), body);
+        ty += 70;
+    }
+
+    // ---- genres ----------------------------------------------------------
+    {
+        float cx = kPad;
+        for (size_t i = 0; i < st.hero.genres.size() && i < 4; ++i) {
+            const std::wstring g = widen(st.hero.genres[i]);
+            const float pillW = static_cast<float>(g.size()) * 6.6f + 22;
+            if (cx + pillW > kPad + textW) break;
+            const Rect pill{cx, ty, pillW, 24};
+            const int id = 700 + static_cast<int>(i);
+            const bool hot = u.clickable(id, pill);
+            if (u.hover(id) > 0 && u.hover(id) < 1) wantMore = true;
+            u.c.fill(pill, u.hover(id) > 0.1f ? accent.withAlpha(0.22f) : gfx::rgb(0x16161F),
+                     12);
+            u.c.stroke(pill, u.hover(id) > 0.1f ? accent : line, 12);
+            u.c.text(g, {pill.x, pill.y + 4, pill.w, 16}, gfx::rgb(0xD0D0DC),
+                     f(11.5f, gfx::Weight::Medium, gfx::Align::Center));
+            if (hot) {
+                st.genre = g;
+                st.discoverLoaded = false;
+                st.discovery = ui::Discovery{};
+                st.scroll[static_cast<int>(Screen::Discover)] = 0;
+                st.scrollTarget[static_cast<int>(Screen::Discover)] = 0;
+                st.screen = Screen::Discover;
+                async::discover(st.hero.genres[i]);
+            }
+            cx += pillW + 7;
+        }
+        ty += 36;
+    }
+
+    // ---- the button that makes the banner worth having -------------------
+    {
+        const bool resuming = st.hero.percent > 0 && st.hero.percent < 95;
+        wchar_t label[64];
+        if (st.hero.episode > 0) {
+            swprintf(label, 64, resuming ? L"Resume episode %d" : L"Watch episode %d",
+                     st.hero.episode);
+        } else {
+            swprintf(label, 64, L"Watch now");
+        }
+
+        const Rect go{kPad, ty, 190, 40};
+        const bool hot = u.clickable(710, go);
+        const float h = u.hover(710);
+        if (h > 0 && h < 1) wantMore = true;
+        u.c.fill(go, h > 0.1f ? accentSoft : accent, 10);
+        u.c.text(label, {go.x, go.y + 11, go.w, 20}, gfx::rgb(0x2A0D18),
+                 f(13.5f, gfx::Weight::Semibold, gfx::Align::Center));
+
+        // How far in you already are, under the button.
+        if (resuming) {
+            const Rect track{go.x, go.bottom() + 10, go.w, 3};
+            u.c.fill(track, gfx::rgb(0x2A2A36), 1.5f);
+            u.c.fill({track.x, track.y, track.w * st.hero.percent / 100.0f, track.h}, accent,
+                     1.5f);
+        }
+
+        if (hot) {
+            if (!st.hero.magnet.empty()) {
+                st.lastAnilistId = st.hero.id;
+                st.openMagnet = widen(st.hero.magnet);
+                st.resumeEpisode = st.hero.episode;
+                st.resumeSeconds = st.hero.resumeAt;
+                st.openDone = false;
+                st.searchDone = false;
+                st.screen = Screen::Episodes;
+                async::open(st.hero.magnet, st.hero.episode, st.hero.id);
+            } else {
+                // Nothing downloaded for it, so go and find one.
+                st.query = widen(st.hero.title);
+                st.episodeWanted.clear();
+                st.lastAnilistId = st.hero.id;
+                st.searchDone = false;
+                st.screen = Screen::Results;
+                async::search(st.hero.title, 0);
+            }
+        }
+    }
+
+    return kHeroH;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------- helpers
@@ -288,16 +447,64 @@ namespace {
 bool home(Ui& u, State& st) {
     const float w = u.c.bounds().w;
     const float avail = w - kPad * 2;
-    float y = kHeaderH + 40 - st.scroll[0];
     bool wantMore = false;
 
-    u.c.text(L"Downloads are deleted after you finish watching.",
-             {kPad, kHeaderH + 12, avail - 220, 18}, dim, f(12.5f));
     syncBadge(u);
 
     const auto cont = library::continueWatching(12);
     const auto lists = library::cachedList();
     const auto hist = ui::history();
+
+    // ---- what the banner should be about ---------------------------------
+    //
+    // Whatever you would watch next: the thing you are partway through, or
+    // failing that the next episode of something you are following. Not a
+    // trending show, because the point of the banner is to be the shortest
+    // path back to what you were doing.
+    int heroEpisode = 0;
+    int heroPercent = 0;
+    double heroResume = 0;
+    std::string heroMagnet;
+    st.heroWant = 0;
+
+    if (!cont.empty() && cont[0].anilistId > 0) {
+        const auto& e = cont[0];
+        st.heroWant = e.anilistId;
+        heroEpisode = e.episode;
+        heroPercent = static_cast<int>(e.percent());
+        heroResume = e.currentTime;
+        heroMagnet = e.magnet;
+    } else {
+        for (const auto& m : lists) {
+            if (m.status == "CURRENT" && m.mediaId > 0) {
+                st.heroWant = m.mediaId;
+                heroEpisode = m.nextEpisode;
+                break;
+            }
+        }
+    }
+
+    if (st.heroWant && st.heroAsked != st.heroWant && !async::spotlightRunning()) {
+        st.heroAsked = st.heroWant;
+        async::spotlight(st.heroWant);
+    }
+    async::takeSpotlight(st.hero);
+
+    // AniList knows what the show is; only we know where you are in it.
+    if (st.hero.id == st.heroWant) {
+        st.hero.episode = heroEpisode;
+        st.hero.percent = heroPercent;
+        st.hero.resumeAt = heroResume;
+        st.hero.magnet = heroMagnet;
+    }
+
+    const float heroH = heroBanner(u, st, kHeaderH - st.scroll[0], wantMore);
+    float y = kHeaderH + (heroH > 0 ? heroH + 4 : 40) - st.scroll[0];
+
+    if (heroH == 0) {
+        u.c.text(L"Downloads are deleted after you finish watching.",
+                 {kPad, kHeaderH + 12, avail - 220, 18}, dim, f(12.5f));
+    }
 
     if (cont.empty() && lists.empty() && hist.empty()) {
         u.c.text(L"Nothing here yet.", {kPad, kHeaderH + 80, avail, 26}, fg,

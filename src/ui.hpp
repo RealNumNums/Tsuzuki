@@ -124,6 +124,31 @@ struct MorePage {
 };
 MorePage discoverMore(const std::string& shelfKey, const std::string& genre, int page);
 
+// ---- the featured show -----------------------------------------------
+
+// Everything the banner at the top of the home screen needs about one show.
+struct Spotlight {
+    int id = 0;
+    int episode = 0;      // the one you would watch next
+    int percent = 0;      // how far into it you already are, zero if not started
+    double resumeAt = 0;  // seconds
+    std::string magnet;   // empty when there is nothing to resume straight into
+    std::string title;    // english where AniList has one
+    std::string description;
+    std::string banner;
+    std::string cover;
+    std::string format;
+    std::string status;
+    int year = 0;
+    int score = 0;
+    int episodes = 0;
+    std::vector<std::string> genres;
+};
+
+// The show the home screen should lead with, filled in from AniList. Blocking.
+// `anilistId` of zero means there is nothing to feature.
+bool spotlight(int anilistId, Spotlight& out);
+
 // ---- airing schedule -------------------------------------------------
 
 struct AiringEntry {

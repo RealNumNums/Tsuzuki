@@ -37,6 +37,9 @@ ui::MorePage g_moreResult;
 Slot g_schedSlot;
 std::vector<ui::AiringEntry> g_schedResult;
 
+Slot g_spotSlot;
+ui::Spotlight g_spotResult;
+
 std::atomic<bool> g_alive{true};
 
 }  // namespace
@@ -235,6 +238,42 @@ bool takeSchedule(std::vector<ui::AiringEntry>& out) {
                std::make_move_iterator(g_schedResult.end()));
     g_schedResult.clear();
     g_schedSlot.ready = false;
+    return true;
+}
+
+// ------------------------------------------------------------------ spotlight
+
+void spotlight(int anilistId) {
+    const int gen = ++g_spotSlot.generation;
+    g_spotSlot.running = true;
+    {
+        std::lock_guard<std::mutex> lock(g_spotSlot.mutex);
+        g_spotSlot.ready = false;
+    }
+
+    std::thread([anilistId, gen] {
+        ui::Spotlight out;
+        const bool got = ui::spotlight(anilistId, out);
+        if (!g_alive) return;
+        if (g_spotSlot.generation.load() != gen) return;
+
+        if (got) {
+            std::lock_guard<std::mutex> lock(g_spotSlot.mutex);
+            g_spotResult = std::move(out);
+            g_spotSlot.ready = true;
+        }
+        g_spotSlot.running = false;
+        if (g_notify) g_notify();
+    }).detach();
+}
+
+bool spotlightRunning() { return g_spotSlot.running; }
+
+bool takeSpotlight(ui::Spotlight& out) {
+    std::lock_guard<std::mutex> lock(g_spotSlot.mutex);
+    if (!g_spotSlot.ready) return false;
+    out = std::move(g_spotResult);
+    g_spotSlot.ready = false;
     return true;
 }
 

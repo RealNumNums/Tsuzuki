@@ -45,6 +45,12 @@ bool scheduleRunning();
 // draws what it has as it goes.
 bool takeSchedule(std::vector<ui::AiringEntry>& out);
 
+// The show the home banner leads with. One request, and the answer is held by
+// the caller, so this runs once per featured show rather than once per frame.
+void spotlight(int anilistId);
+bool spotlightRunning();
+bool takeSpotlight(ui::Spotlight& out);
+
 void shutdown();
 
 }  // namespace tsuzuki::async

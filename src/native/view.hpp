@@ -133,6 +133,11 @@ struct State {
     int openShelfPage = 1;
     bool openShelfExhausted = false;
 
+    // The show the home banner leads with, and which show it describes.
+    ui::Spotlight hero;
+    int heroWant = 0;   // the show we would like the banner to be about
+    int heroAsked = 0;  // the show we have already asked AniList about
+
     // Airing calendar: which month is shown, and what airs in it.
     int calYear = 0;
     int calMonth = 0;

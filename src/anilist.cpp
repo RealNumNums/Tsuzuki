@@ -175,6 +175,11 @@ query ($id: Int) {
     id
     episodes
     duration
+    format
+    status
+    seasonYear
+    averageScore
+    genres
     title { romaji english native }
     description(asHtml: false)
     coverImage { extraLarge large color }
@@ -262,6 +267,17 @@ bool details(int id, Details& out) {
     }
     if (m.contains("bannerImage") && m["bannerImage"].is_string()) {
         out.bannerImage = m["bannerImage"].get<std::string>();
+    }
+    out.format = pick(m, "format");
+    out.status = pick(m, "status");
+    if (m.contains("seasonYear") && m["seasonYear"].is_number()) {
+        out.year = m["seasonYear"].get<int>();
+    }
+    if (m.contains("averageScore") && m["averageScore"].is_number()) {
+        out.score = m["averageScore"].get<int>();
+    }
+    for (const auto& g : m.value("genres", json::array())) {
+        if (g.is_string()) out.genres.push_back(g.get<std::string>());
     }
 
     int index = 0;

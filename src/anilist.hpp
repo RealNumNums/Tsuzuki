@@ -73,6 +73,11 @@ struct Details {
     std::string coverImage;
     std::string bannerImage;
     std::string color;  // dominant cover colour, e.g. "#e4bb5d"
+    std::string format;  // TV, MOVIE, OVA...
+    std::string status;  // RELEASING, FINISHED...
+    int year = 0;
+    int score = 0;  // average, out of 100; zero when unrated
+    std::vector<std::string> genres;
     std::vector<EpisodeInfo> episodeInfo;
 };
 

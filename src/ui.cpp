@@ -1246,6 +1246,26 @@ AiringEntry toEntry(const anilist::AiringItem& a, const std::set<int>& mine) {
 
 }  // namespace
 
+bool spotlight(int anilistId, Spotlight& out) {
+    if (!anilistId) return false;
+
+    anilist::Details d;
+    if (!anilist::details(anilistId, d)) return false;
+
+    out.id = anilistId;
+    out.title = d.english.empty() ? d.title : d.english;
+    out.description = d.description;
+    out.banner = d.bannerImage;
+    out.cover = d.coverImage;
+    out.format = d.format;
+    out.status = d.status;
+    out.year = d.year;
+    out.score = d.score;
+    out.episodes = d.episodes;
+    out.genres = d.genres;
+    return true;
+}
+
 std::vector<AiringEntry> schedulePage(long long fromUnix, long long toUnix, int page,
                                       bool mineOnly, bool* hasNext) {
     const std::set<int> mine = myMediaIds();
