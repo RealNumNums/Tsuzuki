@@ -98,115 +98,39 @@ void coverArt(Ui& u, const std::string& url, const Rect& r, float radius) {
 // It leads with whatever you would actually watch next rather than something
 // trending, so the biggest thing on the screen is also the most useful button
 // on it. Returns the height it drew, which is zero before AniList answers.
+//
+// Sized to most of the window, and shaded as little as the words need. A strip
+// under a scrim heavy enough to read white text on anywhere shows almost none
+// of the artwork it is made of, so the text is anchored along the bottom -
+// where a fade into the page background has to exist regardless - and the rest
+// of the picture is left at its own brightness.
 float heroBanner(Ui& u, State& st, float top, bool& wantMore) {
     if (st.hero.id == 0 || st.hero.id != st.heroWant) return 0;
 
     const float w = u.c.bounds().w;
-    constexpr float kHeroH = 330;
-    const Rect band{0, top, w, kHeroH};
+    const float winH = u.c.bounds().h;
 
-    // Artwork first, then enough shading over it that text stays readable on
-    // whatever happens to be underneath.
-    u.c.fill(band, panel);
+    // Tall enough to be the picture, short enough that what is underneath
+    // still peeks and says the page scrolls.
+    const float heroH = (std::max)(340.0f, (std::min)(winH * 0.74f, 640.0f));
+    const Rect band{0, top, w, heroH};
+
+    u.c.fill(band, gfx::rgb(0x0E0E14));
     const std::string art = st.hero.banner.empty() ? st.hero.cover : st.hero.banner;
     if (ID2D1Bitmap* bmp = images::get(art)) u.c.image(bmp, band);
 
-    // Only as much shading as the words need. A full top-to-bottom scrim made
-    // every banner a dark smear; this keeps the right two thirds of the
-    // artwork at something close to its own brightness.
-    const float textBand = std::min(760.0f, w * 0.62f);
-    u.c.gradientH({band.x, band.y, textBand, band.h}, shade.withAlpha(0.90f),
+    // A soft wash from the left for the words, and the fade into the page
+    // along the bottom that the layout needs anyway.
+    u.c.gradientH({band.x, band.y, w * 0.55f, band.h}, shade.withAlpha(0.62f),
                   shade.withAlpha(0.0f));
-    u.c.gradient(band, shade.withAlpha(0.10f), shade.withAlpha(0.42f));
-    u.c.gradient({band.x, band.bottom() - 96, band.w, 96}, bg.withAlpha(0.0f), bg);
+    u.c.gradient({band.x, band.bottom() - band.h * 0.55f, band.w, band.h * 0.55f},
+                 bg.withAlpha(0.0f), bg);
 
-    const float textW = std::min(620.0f, w - kPad * 2);
-    float ty = band.y + 52;
+    // ---- laid out upwards from the bottom edge ---------------------------
+    const float bottom = band.bottom();
+    const float leftW = (std::min)(660.0f, w * 0.52f);
+    const float buttonY = bottom - 132;
 
-    // ---- title ----------------------------------------------------------
-    Font title = f(31, gfx::Weight::Bold);
-    title.wrap = true;
-    const std::wstring name = widen(st.hero.title);
-    const float titleH = std::min(84.0f, u.c.measure(name, textW, title));
-    u.c.text(name, {kPad, ty, textW, titleH}, fg, title);
-    ty += titleH + 12;
-
-    // ---- the facts, as chips --------------------------------------------
-    {
-        float cx = kPad;
-        std::vector<std::wstring> chips;
-        if (st.hero.score > 0) {
-            wchar_t s[16];
-            swprintf(s, 16, L"%d%%", st.hero.score);
-            chips.push_back(s);
-        }
-        if (!st.hero.format.empty()) chips.push_back(widen(st.hero.format));
-        if (st.hero.episodes > 0) {
-            wchar_t s[24];
-            swprintf(s, 24, L"%d episodes", st.hero.episodes);
-            chips.push_back(s);
-        }
-        if (st.hero.year > 0) {
-            wchar_t s[12];
-            swprintf(s, 12, L"%d", st.hero.year);
-            chips.push_back(s);
-        }
-        if (st.hero.status == "RELEASING") chips.push_back(L"Airing");
-
-        for (size_t i = 0; i < chips.size(); ++i) {
-            const float pillW = static_cast<float>(chips[i].size()) * 6.6f + 18;
-            const Rect pill{cx, ty, pillW, 22};
-            const bool isScore = i == 0 && st.hero.score > 0;
-            u.c.fill(pill, isScore ? accent.withAlpha(0.18f) : cardHover.withAlpha(0.85f),
-                     11);
-            u.c.stroke(pill, isScore ? accent.withAlpha(0.5f) : line, 11);
-            u.c.text(chips[i], {pill.x, pill.y + 3, pill.w, 16},
-                     isScore ? accent : fg.withAlpha(0.82f),
-                     f(11.5f, gfx::Weight::Semibold, gfx::Align::Center));
-            cx += pillW + 7;
-        }
-        ty += 34;
-    }
-
-    // ---- what it is about ------------------------------------------------
-    if (!st.hero.description.empty()) {
-        Font body = f(13);
-        body.wrap = true;
-        u.c.text(widen(st.hero.description), {kPad, ty, textW, 60}, fg.withAlpha(0.75f), body);
-        ty += 70;
-    }
-
-    // ---- genres ----------------------------------------------------------
-    {
-        float cx = kPad;
-        for (size_t i = 0; i < st.hero.genres.size() && i < 4; ++i) {
-            const std::wstring g = widen(st.hero.genres[i]);
-            const float pillW = static_cast<float>(g.size()) * 6.6f + 22;
-            if (cx + pillW > kPad + textW) break;
-            const Rect pill{cx, ty, pillW, 24};
-            const int id = 700 + static_cast<int>(i);
-            const bool hot = u.clickable(id, pill);
-            if (u.hover(id) > 0 && u.hover(id) < 1) wantMore = true;
-            u.c.fill(pill, u.hover(id) > 0.1f ? accent.withAlpha(0.22f) : card,
-                     12);
-            u.c.stroke(pill, u.hover(id) > 0.1f ? accent : line, 12);
-            u.c.text(g, {pill.x, pill.y + 4, pill.w, 16}, fg.withAlpha(0.85f),
-                     f(11.5f, gfx::Weight::Medium, gfx::Align::Center));
-            if (hot) {
-                st.genre = g;
-                st.discoverLoaded = false;
-                st.discovery = ui::Discovery{};
-                st.scroll[static_cast<int>(Screen::Discover)] = 0;
-                st.scrollTarget[static_cast<int>(Screen::Discover)] = 0;
-                st.screen = Screen::Discover;
-                async::discover(st.hero.genres[i]);
-            }
-            cx += pillW + 7;
-        }
-        ty += 36;
-    }
-
-    // ---- the button that makes the banner worth having -------------------
     {
         const bool resuming = st.hero.percent > 0 && st.hero.percent < 95;
         wchar_t label[64];
@@ -217,18 +141,17 @@ float heroBanner(Ui& u, State& st, float top, bool& wantMore) {
             swprintf(label, 64, L"Watch now");
         }
 
-        const Rect go{kPad, ty, 190, 40};
+        const Rect go{kPad, buttonY, 196, 42};
         const bool hot = u.clickable(710, go);
         const float h = u.hover(710);
         if (h > 0 && h < 1) wantMore = true;
         u.c.fill(go, h > 0.1f ? accentSoft : accent, 10);
-        u.c.text(label, {go.x, go.y + 11, go.w, 20}, gfx::onAccent(),
+        u.c.text(label, {go.x, go.y + 12, go.w, 20}, gfx::onAccent(),
                  f(13.5f, gfx::Weight::Semibold, gfx::Align::Center));
 
-        // How far in you already are, under the button.
         if (resuming) {
-            const Rect track{go.x, go.bottom() + 10, go.w, 3};
-            u.c.fill(track, line, 1.5f);
+            const Rect track{go.x, go.bottom() + 11, go.w, 3};
+            u.c.fill(track, shade.withAlpha(0.45f), 1.5f);
             u.c.fill({track.x, track.y, track.w * st.hero.percent / 100.0f, track.h}, accent,
                      1.5f);
         }
@@ -245,8 +168,7 @@ float heroBanner(Ui& u, State& st, float top, bool& wantMore) {
                 async::open(st.hero.magnet, st.hero.episode, st.hero.id);
             } else {
                 // Nothing downloaded for it, so go and find one - for the
-                // episode the button just named. Dropping it here is what made
-                // "Watch episode 2" land on an unfiltered list of everything.
+                // episode the button just named.
                 st.query = widen(st.hero.title);
                 if (st.hero.episode > 0) {
                     wchar_t ep[16];
@@ -264,7 +186,102 @@ float heroBanner(Ui& u, State& st, float top, bool& wantMore) {
         }
     }
 
-    return kHeroH;
+    // ---- the facts, as chips, just above the button ----------------------
+    const float chipsY = buttonY - 40;
+    {
+        float cx = kPad;
+        std::vector<std::wstring> chips;
+        if (st.hero.episodes > 0) {
+            wchar_t s[24];
+            swprintf(s, 24, L"%d episodes", st.hero.episodes);
+            chips.push_back(s);
+        }
+        if (!st.hero.format.empty()) chips.push_back(widen(st.hero.format));
+        if (st.hero.status == "RELEASING") chips.push_back(L"Airing");
+        if (st.hero.year > 0) {
+            wchar_t s[12];
+            swprintf(s, 12, L"%d", st.hero.year);
+            chips.push_back(s);
+        }
+
+        for (const auto& chip : chips) {
+            const float pillW = static_cast<float>(chip.size()) * 6.8f + 20;
+            const Rect pill{cx, chipsY, pillW, 26};
+            u.c.fill(pill, shade.withAlpha(0.5f), 13);
+            u.c.stroke(pill, fg.withAlpha(0.16f), 13);
+            u.c.text(chip, {pill.x, pill.y + 5, pill.w, 16}, fg.withAlpha(0.9f),
+                     f(11.5f, gfx::Weight::Medium, gfx::Align::Center));
+            cx += pillW + 8;
+        }
+        if (st.hero.score > 0) {
+            wchar_t sc[16];
+            swprintf(sc, 16, L"%d%%", st.hero.score);
+            const Rect pill{cx, chipsY, 52, 26};
+            u.c.fill(pill, shade.withAlpha(0.5f), 13);
+            u.c.stroke(pill, good.withAlpha(0.35f), 13);
+            u.c.text(sc, {pill.x, pill.y + 5, pill.w, 16}, good,
+                     f(11.5f, gfx::Weight::Semibold, gfx::Align::Center));
+        }
+    }
+
+    // ---- title, sitting on top of the chips ------------------------------
+    {
+        Font title = f(40, gfx::Weight::Bold);
+        title.wrap = true;
+        const std::wstring name = widen(st.hero.title);
+        const float titleH = (std::min)(140.0f, u.c.measure(name, leftW, title));
+        u.c.text(name, {kPad, chipsY - 14 - titleH, leftW, titleH}, fg, title);
+    }
+
+    // ---- genres, bottom right --------------------------------------------
+    const float genreY = bottom - 128;
+    {
+        // Measured first, then laid out left to right from a right-aligned
+        // start. Walking leftwards while stepping through the genres in order
+        // ends up drawing them backwards.
+        const size_t shown = (std::min)(st.hero.genres.size(), static_cast<size_t>(3));
+        std::vector<float> widths;
+        float totalW = 0;
+        for (size_t i = 0; i < shown; ++i) {
+            const float pillW = static_cast<float>(widen(st.hero.genres[i]).size()) * 7.0f + 26;
+            widths.push_back(pillW);
+            totalW += pillW + (i + 1 < shown ? 9.0f : 0.0f);
+        }
+
+        float cx = w - kPad - totalW;
+        for (size_t i = 0; i < shown; ++i) {
+            const Rect pill{cx, genreY, widths[i], 30};
+            cx += widths[i] + 9;
+            const int id = 700 + static_cast<int>(i);
+            const bool hot = u.clickable(id, pill);
+            const float hv = u.hover(id);
+            if (hv > 0 && hv < 1) wantMore = true;
+            u.c.fill(pill, hv > 0.1f ? accent.withAlpha(0.3f) : shade.withAlpha(0.5f), 15);
+            u.c.stroke(pill, hv > 0.1f ? accent : fg.withAlpha(0.16f), 15);
+            u.c.text(widen(st.hero.genres[i]), {pill.x, pill.y + 7, pill.w, 16},
+                     fg.withAlpha(0.9f), f(11.5f, gfx::Weight::Medium, gfx::Align::Center));
+            if (hot) {
+                st.genre = widen(st.hero.genres[i]);
+                st.discoverLoaded = false;
+                st.discovery = ui::Discovery{};
+                st.scroll[static_cast<int>(Screen::Discover)] = 0;
+                st.scrollTarget[static_cast<int>(Screen::Discover)] = 0;
+                st.screen = Screen::Discover;
+                async::discover(st.hero.genres[i]);
+            }
+        }
+    }
+
+    // ---- what it is about, above the genres ------------------------------
+    if (!st.hero.description.empty()) {
+        Font body = f(12.5f, gfx::Weight::Regular, gfx::Align::Right);
+        body.wrap = true;
+        const float dw = (std::min)(560.0f, w * 0.44f);
+        u.c.text(widen(st.hero.description), {w - kPad - dw, genreY - 66, dw, 58},
+                 fg.withAlpha(0.82f), body);
+    }
+
+    return heroH;
 }
 
 }  // namespace
@@ -629,9 +646,21 @@ bool home(Ui& u, State& st) {
 
     syncBadge(u);
 
-    const auto cont = library::continueWatching(12);
-    const auto lists = library::cachedList();
-    const auto hist = ui::history();
+    // Refreshed on a timer rather than per frame, and immediately whenever
+    // something has changed them.
+    {
+        const long long now = static_cast<long long>(GetTickCount64());
+        if (st.homeStale || now - st.homeFetchedAt > 1000) {
+            st.homeContinue = library::continueWatching(12);
+            st.homeList = library::cachedList();
+            st.homeHistory = ui::history();
+            st.homeFetchedAt = now;
+            st.homeStale = false;
+        }
+    }
+    const auto& cont = st.homeContinue;
+    const auto& lists = st.homeList;
+    const auto& hist = st.homeHistory;
 
     // ---- what the banner should be about ---------------------------------
     //
@@ -707,6 +736,7 @@ bool home(Ui& u, State& st) {
         sectionHeader(u, L"Continue watching", L"pick up where you left off", kPad, y, avail);
         if (clearLink(u, 190, y - 30, kPad + avail)) {
             library::forgetAllInProgress();
+            st.homeStale = true;
             return true;  // the list just changed under us
         }
         const Grid g = gridFor(avail, kCardW);
@@ -766,6 +796,7 @@ bool home(Ui& u, State& st) {
             if (dismiss(u, 220 + static_cast<int>(i), x, h)) {
                 library::forget(
                     library::keyFor(e.anilistId, e.episode, e.infoHash, e.fileIndex));
+                st.homeStale = true;
                 return true;
             }
 
@@ -854,6 +885,7 @@ bool home(Ui& u, State& st) {
         sectionHeader(u, L"Recently opened", L"on this machine", kPad, y, avail);
         if (clearLink(u, 191, y - 30, kPad + avail)) {
             ui::clearHistory();
+            st.homeStale = true;
             return true;
         }
         for (size_t i = 0; i < hist.size() && i < 12; ++i) {
@@ -893,6 +925,7 @@ bool home(Ui& u, State& st) {
             const Rect hx{row.right() - 38, row.y + 22, 22, 22};
             if (dismiss(u, 560 + static_cast<int>(i), hx, hv)) {
                 ui::forgetHistory(h.magnet, h.file);
+                st.homeStale = true;
                 return true;
             }
 

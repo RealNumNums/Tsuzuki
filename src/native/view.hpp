@@ -10,6 +10,7 @@
 // Drawing is all our own (see gfx), so this looks like a media app rather than
 // a tool: rounded cards, cover art, gradient scrims, hover lift.
 
+#include "../library.hpp"
 #include "../settings.hpp"
 #include "../ui.hpp"
 #include "gfx.hpp"
@@ -165,6 +166,18 @@ struct State {
     std::vector<ui::DiscoverItem> openShelfItems;
     int openShelfPage = 1;
     bool openShelfExhausted = false;
+
+    // What the home screen shows, kept between frames.
+    //
+    // These were fetched on every frame, and one of them - the recently-opened
+    // list - opens and parses a file from disk each call. At sixty frames a
+    // second, hovering anything on the home screen meant sixty file reads a
+    // second. None of it changes often enough to be worth asking that hard.
+    std::vector<library::EpisodeProgress> homeContinue;
+    std::vector<library::CachedMedia> homeList;
+    std::vector<ui::HistoryItem> homeHistory;
+    long long homeFetchedAt = 0;  // ms; zero forces a refresh
+    bool homeStale = true;        // set by anything that changes them
 
     // The show the home banner leads with, and which show it describes.
     ui::Spotlight hero;
