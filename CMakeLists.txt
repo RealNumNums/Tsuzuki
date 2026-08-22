@@ -33,6 +33,7 @@ add_library(tsuzuki_core STATIC
   src/player.cpp
   src/track.cpp
   src/trackers.cpp
+  src/trackers_ext.cpp
   src/discord.cpp
   src/library.cpp
   src/tracks.cpp

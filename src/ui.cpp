@@ -2,6 +2,7 @@
 
 #include "library.hpp"
 #include "settings.hpp"
+#include "tracker.hpp"
 #include "tracks.hpp"
 
 #include <httplib.h>
@@ -150,7 +151,9 @@ json settingsToJson(const Settings& s) {
                 {"dhtPort", s.dhtPort},
                 {"disableDHT", s.disableDHT},
                 {"disablePeX", s.disablePeX},
-                {"anilistClientId", s.anilistClientId},
+                {"malClientId", s.malClientId},
+        {"simklClientId", s.simklClientId},
+        {"anilistClientId", s.anilistClientId},
                 {"anilistClientSecret", s.anilistClientSecret},
                 {"anilistRedirect", s.anilistRedirect},
                 {"syncProgress", s.syncProgress},
@@ -181,6 +184,8 @@ void settingsFromJson(const json& j, Settings& s) {
     if (j.contains("dhtPort") && j["dhtPort"].is_number()) s.dhtPort = j["dhtPort"];
     if (j.contains("disableDHT") && j["disableDHT"].is_boolean()) s.disableDHT = j["disableDHT"];
     if (j.contains("disablePeX") && j["disablePeX"].is_boolean()) s.disablePeX = j["disablePeX"];
+    if (j.contains("malClientId") && j["malClientId"].is_string()) s.malClientId = j["malClientId"];
+    if (j.contains("simklClientId") && j["simklClientId"].is_string()) s.simklClientId = j["simklClientId"];
     if (j.contains("anilistClientId") && j["anilistClientId"].is_string()) s.anilistClientId = j["anilistClientId"];
     if (j.contains("anilistClientSecret") && j["anilistClientSecret"].is_string()) s.anilistClientSecret = j["anilistClientSecret"];
     if (j.contains("anilistRedirect") && j["anilistRedirect"].is_string() &&
@@ -1346,6 +1351,91 @@ void applySettings(const Settings& next) {
 // Defined below, with the rest of the host hooks.
 extern AuthHook g_authHook;
 
+// Which service the hosted login window is signing in to, so the token it
+// captures is handed to the right one.
+std::string g_linking = "anilist";
+
+std::vector<TrackerRow> trackers() {
+    std::vector<TrackerRow> out;
+    for (tracker::Service* s : tracker::all()) {
+        TrackerRow row;
+        row.id = s->id();
+        row.name = s->name();
+        row.configured = s->configured();
+        row.hint = s->configHint();
+        row.linked = s->linked();
+        row.authKind = static_cast<int>(s->authKind());
+        if (row.linked) row.account = s->account(false).name;
+        out.push_back(std::move(row));
+    }
+    return out;
+}
+
+LinkStart startLink(const std::string& serviceId) {
+    LinkStart out;
+    tracker::Service* s = tracker::byId(serviceId);
+    if (!s) {
+        out.error = "Unknown service.";
+        return out;
+    }
+    if (!s->configured()) {
+        out.error = s->configHint();
+        return out;
+    }
+
+    switch (s->authKind()) {
+        case tracker::AuthKind::HostedLogin: {
+            const std::string url = s->authorizeUrl();
+            if (url.empty()) {
+                out.error = "Could not build the sign-in URL.";
+                return out;
+            }
+            g_linking = serviceId;
+            if (g_authHook) {
+                g_authHook(url.c_str());
+            } else {
+                openExternal(url);
+            }
+            out.ok = true;
+            return out;
+        }
+        case tracker::AuthKind::DeviceCode: {
+            const tracker::DeviceCode dc = s->beginDeviceCode();
+            out.ok = dc.ok;
+            out.userCode = dc.userCode;
+            out.verificationUrl = dc.verificationUrl;
+            out.error = dc.error;
+            // Opening the page is the whole point of a device code - the
+            // user has to be somewhere they can type it.
+            if (dc.ok && !dc.verificationUrl.empty()) openExternal(dc.verificationUrl);
+            return out;
+        }
+        case tracker::AuthKind::Password:
+            out.ok = true;  // the screen collects the details and calls signIn
+            return out;
+    }
+    return out;
+}
+
+bool pollLink(const std::string& serviceId, std::string& error) {
+    tracker::Service* s = tracker::byId(serviceId);
+    return s && s->pollDeviceCode(error);
+}
+
+bool signInTracker(const std::string& serviceId, const std::string& user,
+                   const std::string& password, std::string& error) {
+    tracker::Service* s = tracker::byId(serviceId);
+    if (!s) {
+        error = "Unknown service.";
+        return false;
+    }
+    return s->signIn(user, password, error);
+}
+
+void unlinkTracker(const std::string& serviceId) {
+    if (tracker::Service* s = tracker::byId(serviceId)) s->logout();
+}
+
 bool startAniListLogin(std::string& error) {
     const Settings cfg = currentSettings();
     const std::string clientId = track::resolveClientId(cfg.anilistClientId);
@@ -1446,7 +1536,13 @@ AuthHook g_authHook = nullptr;
 void setAuthHook(AuthHook hook) { g_authHook = hook; }
 
 void acceptToken(const std::string& token) {
-    if (!token.empty()) track::setToken(token);
+    // The hosted login window hands back whatever it saw in the redirect.
+    // Which service that belongs to depends on which one asked for it.
+    if (tracker::Service* s = tracker::byId(g_linking)) {
+        if (s->acceptRedirect(token)) return;
+    }
+    // AniList historically received a bare token rather than a URL.
+    track::setToken(token);
 }
 
 void setVideoHost(void* hwnd, PlaybackHook hook) {

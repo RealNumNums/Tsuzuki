@@ -78,23 +78,38 @@ class AniList final : public Service {
 
 AniList g_anilist;
 
+}  // namespace
+
+// Defined in trackers_ext.cpp, which owns the three that are not AniList.
+Service* malService();
+Service* simklService();
+Service* kitsuService();
+
+namespace {
+
 // Order matters only in that it is stable; AniList first because it is primary.
-std::vector<Service*> g_services = {&g_anilist};
+std::vector<Service*> g_services;
 
 }  // namespace
 
-std::vector<Service*> all() { return g_services; }
+std::vector<Service*> all() {
+    if (g_services.empty()) {
+        g_services = {&g_anilist, malService(), simklService(), kitsuService()};
+    }
+    return g_services;
+}
 
 Service* byId(const std::string& id) {
-    const auto it = std::find_if(g_services.begin(), g_services.end(),
+    auto services = all();
+    const auto it = std::find_if(services.begin(), services.end(),
                                  [&](Service* s) { return id == s->id(); });
-    return it == g_services.end() ? nullptr : *it;
+    return it == services.end() ? nullptr : *it;
 }
 
 Service* primary() { return &g_anilist; }
 
 void loadAll() {
-    for (Service* s : g_services) s->load();
+    for (Service* s : all()) s->load();
 }
 
 }  // namespace tsuzuki::tracker

@@ -21,7 +21,20 @@ struct Response {
     long long retryAfterSeconds = 0;
 };
 
-Response get(const std::string& url, int timeoutSeconds = 20);
+// A bearer token is optional throughout - the trackers each need one, and
+// each wants a different verb and content type. There is one implementation
+// behind all of these.
+Response get(const std::string& url, int timeoutSeconds = 20,
+             const std::string& bearerToken = "");
+
+// Form-encoded bodies, which is what the OAuth token endpoints and the
+// MyAnimeList list API want instead of JSON.
+Response postForm(const std::string& url, const std::string& body, int timeoutSeconds = 20,
+                  const std::string& bearerToken = "");
+Response patchForm(const std::string& url, const std::string& body, int timeoutSeconds = 20,
+                   const std::string& bearerToken = "");
+Response patchJson(const std::string& url, const std::string& body, int timeoutSeconds = 20,
+                   const std::string& bearerToken = "");
 
 // POST with a JSON body (AniList's GraphQL endpoint).
 Response postJson(const std::string& url, const std::string& body, int timeoutSeconds = 20,

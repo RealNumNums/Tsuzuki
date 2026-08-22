@@ -44,6 +44,13 @@ struct Settings {
     std::string anilistRedirect = "http://127.0.0.1:7654/auth/anilist";
     bool syncProgress = true;
 
+    // Client ids for the other trackers. Registered by whoever runs the app -
+    // MyAnimeList at myanimelist.net/apiconfig, Simkl in its developer
+    // settings. Kitsu needs none: its client credentials are public and shared
+    // by every third-party app.
+    std::string malClientId;
+    std::string simklClientId;
+
     // Interface extras
     double uiScale = 1.0;
     bool hideSpoilers = false;

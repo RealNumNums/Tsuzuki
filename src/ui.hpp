@@ -175,6 +175,41 @@ void applySettings(const Settings&);
 // Starts AniList linking. In the app this opens the window we own; returns
 // false with `error` set when there is no client id to use.
 bool startAniListLogin(std::string& error);
+
+// ---- trackers --------------------------------------------------------
+//
+// One row per service on the settings screen. The engine answers what each
+// one needs so the screen does not have to know how any of them work.
+
+struct TrackerRow {
+    std::string id;        // "anilist", "mal", ...
+    std::string name;      // "AniList"
+    std::string account;   // signed-in name, empty when not linked
+    std::string hint;      // why it cannot be linked yet, when it cannot
+    bool linked = false;
+    bool configured = false;
+    int authKind = 0;      // 0 hosted login, 1 device code, 2 password
+};
+std::vector<TrackerRow> trackers();
+
+// Starts linking whichever service. For a hosted login this opens the
+// window; for a device code it returns the code to show; for a password it
+// does nothing until signInTracker is called.
+struct LinkStart {
+    bool ok = false;
+    std::string userCode;         // device code only
+    std::string verificationUrl;  // device code only
+    std::string error;
+};
+LinkStart startLink(const std::string& serviceId);
+
+// True once the device code has been approved.
+bool pollLink(const std::string& serviceId, std::string& error);
+
+bool signInTracker(const std::string& serviceId, const std::string& user,
+                   const std::string& password, std::string& error);
+
+void unlinkTracker(const std::string& serviceId);
 void logoutAniList();
 
 void shutdown();

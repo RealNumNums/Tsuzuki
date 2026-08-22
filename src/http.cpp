@@ -64,45 +64,15 @@ constexpr char kBase64Alphabet[] =
 
 }  // namespace
 
-Response get(const std::string& url, int timeoutSeconds) {
-    globalInit();
+// One place that actually talks to curl. Every verb below is a thin call
+// into this, because the four of them differed only in method, content type
+// and whether there was a body at all - and keeping four copies in step is
+// how one of them ends up missing the rate-limit headers or the DoH setting.
+namespace {
 
-    Response r;
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        r.error = "curl_easy_init failed";
-        return r;
-    }
-
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(timeoutSeconds));
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "tsuzuki/0.1 (+https://github.com/RealNumNums/Tsuzuki)");
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &r.body);
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCb);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &r);
-    applyDoh(curl);
-
-    const CURLcode code = curl_easy_perform(curl);
-    if (code == CURLE_OK) {
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &r.status);
-        r.ok = (r.status >= 200 && r.status < 300);
-        if (!r.ok) r.error = "HTTP " + std::to_string(r.status);
-    } else {
-        r.error = curl_easy_strerror(code);
-    }
-
-    curl_easy_cleanup(curl);
-    return r;
-}
-
-
-Response postJson(const std::string& url, const std::string& body, int timeoutSeconds,
-                  const std::string& bearerToken) {
+Response perform(const char* method, const std::string& url, const std::string* body,
+                 const char* contentType, int timeoutSeconds,
+                 const std::string& bearerToken) {
     globalInit();
 
     Response r;
@@ -113,8 +83,11 @@ Response postJson(const std::string& url, const std::string& body, int timeoutSe
     }
 
     curl_slist* headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
     headers = curl_slist_append(headers, "Accept: application/json");
+    if (contentType) {
+        const std::string ct = std::string("Content-Type: ") + contentType;
+        headers = curl_slist_append(headers, ct.c_str());
+    }
     std::string auth;
     if (!bearerToken.empty()) {
         auth = "Authorization: Bearer " + bearerToken;
@@ -122,14 +95,19 @@ Response postJson(const std::string& url, const std::string& body, int timeoutSe
     }
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    if (body) {
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body->c_str());
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body->size()));
+    }
+    if (method) curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(timeoutSeconds));
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "tsuzuki/0.1 (+https://github.com/RealNumNums/Tsuzuki)");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT,
+                     "tsuzuki/0.1 (+https://github.com/RealNumNums/Tsuzuki)");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &r.body);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCb);
@@ -148,6 +126,34 @@ Response postJson(const std::string& url, const std::string& body, int timeoutSe
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
     return r;
+}
+
+}  // namespace
+
+Response get(const std::string& url, int timeoutSeconds, const std::string& bearerToken) {
+    return perform(nullptr, url, nullptr, nullptr, timeoutSeconds, bearerToken);
+}
+
+Response postJson(const std::string& url, const std::string& body, int timeoutSeconds,
+                  const std::string& bearerToken) {
+    return perform("POST", url, &body, "application/json", timeoutSeconds, bearerToken);
+}
+
+Response postForm(const std::string& url, const std::string& body, int timeoutSeconds,
+                  const std::string& bearerToken) {
+    return perform("POST", url, &body, "application/x-www-form-urlencoded", timeoutSeconds,
+                   bearerToken);
+}
+
+Response patchForm(const std::string& url, const std::string& body, int timeoutSeconds,
+                   const std::string& bearerToken) {
+    return perform("PATCH", url, &body, "application/x-www-form-urlencoded", timeoutSeconds,
+                   bearerToken);
+}
+
+Response patchJson(const std::string& url, const std::string& body, int timeoutSeconds,
+                   const std::string& bearerToken) {
+    return perform("PATCH", url, &body, "application/json", timeoutSeconds, bearerToken);
 }
 
 void setDohUrl(const std::string& url) {

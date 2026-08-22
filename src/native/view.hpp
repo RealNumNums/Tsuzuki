@@ -124,6 +124,17 @@ struct State {
     bool discoverLoaded = false;
     std::wstring genre;
 
+    // Linking a tracker. Simkl shows a code to type in on its site; Kitsu
+    // has no consent page and asks here. Both need somewhere to live while
+    // the exchange is in progress.
+    std::string linking;        // service id, empty when nothing is in progress
+    std::wstring deviceCode;
+    std::wstring deviceUrl;
+    std::wstring kitsuUser;
+    std::wstring kitsuPassword;
+    std::wstring linkError;
+    unsigned lastPoll = 0;
+
     // Where to go back to once playback ends. Playback takes over the whole
     // window, so the screen behind it has to be remembered.
 Screen beforePlayer = Screen::Home;

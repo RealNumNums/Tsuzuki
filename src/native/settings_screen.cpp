@@ -65,7 +65,7 @@ int segmented(Ui& u, int id, const Rect& r, const wchar_t* const* labels, const 
 
 // Editable text. Focus lives in State so exactly one field has it at a time.
 void field(Ui& u, State& st, int id, const Rect& r, std::wstring& value,
-           const wchar_t* placeholder) {
+           const wchar_t* placeholder, bool secret = false) {
     const bool over = r.contains(u.in.mouseX, u.in.mouseY);
     if (u.in.mousePressed && over) st.focusField = id;
     else if (u.in.mousePressed && !over && st.focusField == id) st.focusField = 0;
@@ -78,7 +78,9 @@ void field(Ui& u, State& st, int id, const Rect& r, std::wstring& value,
     if (value.empty() && !focused) {
         u.c.text(placeholder, inner, dim, f(12.5f));
     } else {
-        u.c.text(value, inner, fg, f(12.5f));
+        // A password is shown as dots. It is still held in memory as typed -
+        // it has to be, to be sent - but it should not be on screen.
+        u.c.text(secret ? std::wstring(value.size(), L'\u2022') : value, inner, fg, f(12.5f));
         if (focused && (GetTickCount() / 500) % 2 == 0) {
             const float cw = value.size() * 6.3f;
             u.c.fill({inner.x + cw + 1, inner.y + 1, 1.4f, 16}, accent);
@@ -157,36 +159,135 @@ bool settingsScreen(Ui& u, State& st) {
     u.c.text(L"Settings", {kPad, y, 400, 30}, fg, f(21, gfx::Weight::Bold));
     y += 40;
 
-    // ---- Account ------------------------------------------------------
-    groupHeader(u, y, L"ACCOUNT");
+    // ---- Accounts -----------------------------------------------------
+    groupHeader(u, y, L"ACCOUNTS");
     {
-        const track::Account acc = track::account();
-        const Rect ctrl = row(u, y, w,
-                              acc.linked ? L"AniList" : L"AniList - not linked",
-                              acc.linked ? L"Progress syncs automatically as you watch."
-                                         : L"Link to sync watch progress and see your lists.");
-        const Rect btn{ctrl.right() - 150, ctrl.y, 150, 32};
-        const bool clicked = u.clickable(7100, btn);
-        u.c.fill(btn, acc.linked ? gfx::rgb(0x22222E) : accent, 8);
-        u.c.text(acc.linked ? L"Unlink" : L"Link AniList", {btn.x, btn.y + 8, btn.w, 18},
-                 acc.linked ? fg : gfx::rgb(0x2A0D18),
-                 f(12.5f, gfx::Weight::Semibold, gfx::Align::Center));
-        if (clicked) {
-            if (acc.linked) {
-                ui::logoutAniList();
-            } else {
-                std::string err;
-                if (!ui::startAniListLogin(err)) st.message = widen(err);
+        int id = 7100;
+        for (const ui::TrackerRow& t : ui::trackers()) {
+            const std::wstring name = widen(t.name);
+            const std::wstring note =
+                t.linked ? (t.account.empty() ? std::wstring(L"Linked.")
+                                              : L"Signed in as " + widen(t.account))
+                : !t.configured ? widen(t.hint)
+                                : std::wstring(L"Progress is sent here as you watch.");
+
+            // row() takes a const wchar_t*, and these are built per frame.
+            const Rect ctrl = row(u, y, w, name.c_str(), note.c_str());
+            const Rect btn{ctrl.right() - 150, ctrl.y, 150, 32};
+
+            const bool canPress = t.linked || t.configured;
+            const bool clicked = canPress && u.clickable(id, btn);
+            u.c.fill(btn, !canPress ? gfx::rgb(0x1A1A24)
+                        : t.linked  ? gfx::rgb(0x22222E)
+                                    : accent,
+                     8);
+            u.c.text(t.linked ? L"Unlink" : L"Link", {btn.x, btn.y + 8, btn.w, 18},
+                     !canPress ? dim : (t.linked ? fg : gfx::rgb(0x2A0D18)),
+                     f(12.5f, gfx::Weight::Semibold, gfx::Align::Center));
+
+            if (clicked) {
+                st.linkError.clear();
+                if (t.linked) {
+                    ui::unlinkTracker(t.id);
+                    if (st.linking == t.id) st.linking.clear();
+                } else {
+                    const ui::LinkStart r = ui::startLink(t.id);
+                    if (!r.ok) {
+                        st.linkError = widen(r.error);
+                    } else if (t.authKind == 1) {  // device code
+                        st.linking = t.id;
+                        st.deviceCode = widen(r.userCode);
+                        st.deviceUrl = widen(r.verificationUrl);
+                    } else if (t.authKind == 2) {  // password
+                        st.linking = t.id;
+                    }
+                }
+            }
+            id += 2;
+
+            // A service that cannot be linked because nobody has supplied a
+            // client id needs somewhere to put one, or the hint above is a
+            // dead end.
+            if (!t.configured) {
+                std::wstring value = widen(t.id == "mal" ? s.malClientId : s.simklClientId);
+                const Rect box{w - kPad - kCtrlW, y, kCtrlW, 30};
+                field(u, st, t.id == "mal" ? 7810 : 7811, box, value, L"paste the Client ID");
+                u.c.text(L"Client ID", {kPad, y + 6, 200, 18}, dim, f(11.5f));
+                if (t.id == "mal") {
+                    s.malClientId = narrow(value);
+                } else {
+                    s.simklClientId = narrow(value);
+                }
+                y += 40;
+            }
+
+            // ---- the two flows that need more than a button -----------
+            if (st.linking == t.id && t.authKind == 1 && !st.deviceCode.empty()) {
+                u.c.fill({kPad, y, w - kPad * 2, 62}, gfx::rgb(0x16161F), 10);
+                u.c.stroke({kPad, y, w - kPad * 2, 62}, accent.withAlpha(0.5f), 10);
+                u.c.text(L"Enter this code at " + st.deviceUrl,
+                         {kPad + 16, y + 10, w - kPad * 2 - 32, 18}, dim, f(11.5f));
+                u.c.text(st.deviceCode, {kPad + 16, y + 28, 300, 26}, accent,
+                         f(20, gfx::Weight::Bold));
+
+                // Ask Simkl every couple of seconds whether it has been
+                // approved. Any faster is just noise on their end.
+                const unsigned now = GetTickCount();
+                if (now - st.lastPoll > 2500) {
+                    st.lastPoll = now;
+                    std::string err;
+                    if (ui::pollLink(t.id, err)) {
+                        st.linking.clear();
+                        st.deviceCode.clear();
+                    } else if (!err.empty()) {
+                        st.linkError = widen(err);
+                    }
+                }
+                wantMore = true;  // keep polling
+                y += 72;
+            }
+
+            if (st.linking == t.id && t.authKind == 2) {
+                u.c.fill({kPad, y, w - kPad * 2, 108}, gfx::rgb(0x16161F), 10);
+                u.c.stroke({kPad, y, w - kPad * 2, 108}, line, 10);
+                u.c.text(widen(t.hint), {kPad + 16, y + 10, w - kPad * 2 - 32, 18}, dim,
+                         f(11.5f));
+
+                const float fieldW = (std::min)(320.0f, w - kPad * 2 - 200);
+                u.c.text(L"Username", {kPad + 16, y + 38, 90, 18}, fg, f(12));
+                field(u, st, 7800, {kPad + 110, y + 32, fieldW, 30}, st.kitsuUser, L"");
+                u.c.text(L"Password", {kPad + 16, y + 74, 90, 18}, fg, f(12));
+                field(u, st, 7801, {kPad + 110, y + 68, fieldW, 30}, st.kitsuPassword, L"",
+                      true);
+
+                const Rect go{kPad + 130 + fieldW, y + 50, 110, 32};
+                if (u.clickable(7802, go)) {
+                    std::string err;
+                    if (ui::signInTracker(t.id, narrow(st.kitsuUser),
+                                          narrow(st.kitsuPassword), err)) {
+                        st.linking.clear();
+                    } else {
+                        st.linkError = widen(err);
+                    }
+                    // Never keep it around a moment longer than needed.
+                    st.kitsuPassword.clear();
+                }
+                u.c.fill(go, accent, 8);
+                u.c.text(L"Sign in", {go.x, go.y + 7, go.w, 18}, gfx::rgb(0x2A0D18),
+                         f(12.5f, gfx::Weight::Semibold, gfx::Align::Center));
+                y += 118;
             }
         }
-        if (acc.linked && !acc.name.empty()) {
-            u.c.text(L"Signed in as " + widen(acc.name), {kPad, y, w - kPad * 2, 18}, dim, f(11.5f));
+
+        if (!st.linkError.empty()) {
+            u.c.text(st.linkError, {kPad, y, w - kPad * 2, 18}, bad, f(11.5f));
             y += 22;
         }
     }
     {
-        const Rect ctrl = row(u, y, w, L"Sync progress to AniList",
-                              L"Marks an episode watched once you reach the end.");
+        const Rect ctrl = row(u, y, w, L"Sync progress",
+                              L"Marks an episode watched on every linked service "
+                              L"once you reach the end.");
         toggle(u, 7110, ctrl, s.syncProgress);
     }
 
