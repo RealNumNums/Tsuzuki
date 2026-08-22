@@ -244,13 +244,22 @@ float heroBanner(Ui& u, State& st, float top, bool& wantMore) {
                 st.screen = Screen::Episodes;
                 async::open(st.hero.magnet, st.hero.episode, st.hero.id);
             } else {
-                // Nothing downloaded for it, so go and find one.
+                // Nothing downloaded for it, so go and find one - for the
+                // episode the button just named. Dropping it here is what made
+                // "Watch episode 2" land on an unfiltered list of everything.
                 st.query = widen(st.hero.title);
-                st.episodeWanted.clear();
+                if (st.hero.episode > 0) {
+                    wchar_t ep[16];
+                    swprintf(ep, 16, L"%d", st.hero.episode);
+                    st.episodeWanted = ep;
+                } else {
+                    st.episodeWanted.clear();
+                }
                 st.lastAnilistId = st.hero.id;
                 st.searchDone = false;
+                st.pendingEpisode = st.hero.episode;
                 st.screen = Screen::Results;
-                async::search(st.hero.title, 0);
+                async::search(st.hero.title, 0, st.hero.episode);
             }
         }
     }
@@ -832,7 +841,8 @@ bool home(Ui& u, State& st) {
                 st.lastAnilistId = e.mediaId;
                 st.searchDone = false;
                 st.screen = Screen::Results;
-                async::search(e.title, 0);
+                st.pendingEpisode = e.nextEpisode;
+                async::search(e.title, 0, e.nextEpisode);
             }
         }
         const int rows = (static_cast<int>(watching.size()) + g.cols - 1) / g.cols;

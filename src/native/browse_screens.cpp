@@ -173,7 +173,10 @@ bool resultsScreen(Ui& u, State& st) {
         }
     }
 
-    if (episodes.size() > 1 || anyBatch) {
+    // Shown while filtered even if only one episode came back, because a
+    // narrowed search returns exactly that episode - without the row there is
+    // no way out of it again.
+    if (episodes.size() > 1 || anyBatch || st.resultsEpisode != 0) {
         float cx = kPad;
         float cy = y;
         int chipId = 1600;
@@ -216,11 +219,27 @@ bool resultsScreen(Ui& u, State& st) {
                 st.resultsEpisodeChosen = true;
                 st.scrollTarget[static_cast<int>(Screen::Results)] = 0;
 
-                // Nothing here for that episode means the broad search never
-                // reached it, so go and ask for it by name.
+                // The header's Ep # box and this row are two views of the same
+                // choice, so picking here updates it. Without this, choosing
+                // All re-widened the search and then the stale box immediately
+                // re-applied the old episode to the results.
+                if (chip.value > 0) {
+                    wchar_t ep[16];
+                    swprintf(ep, 16, L"%d", chip.value);
+                    st.episodeWanted = ep;
+                } else {
+                    st.episodeWanted.clear();
+                }
+
+                // Going back to All after a narrowed search has to search
+                // again: the narrow results only ever contained one episode,
+                // so there is nothing to widen to.
+                const bool narrowed = present.size() <= 1;
                 const bool have =
-                    chip.value <= 0 ||
-                    std::find(present.begin(), present.end(), chip.value) != present.end();
+                    chip.value == -1 ||
+                    (chip.value == 0 && !narrowed) ||
+                    (chip.value > 0 &&
+                     std::find(present.begin(), present.end(), chip.value) != present.end());
                 if (!have) {
                     const std::string title = st.results.resolvedTitle.empty()
                                                   ? narrow(st.query)
