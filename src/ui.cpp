@@ -321,6 +321,33 @@ void applySessionSettings(Engine& e, const Settings& cfg) {
     }
 }
 
+std::string mpvLogPath() {
+    const char* base = std::getenv("LOCALAPPDATA");
+    std::string dir = base ? std::string(base) + "\\Tsuzuki" : std::string(".");
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    return dir + "\\mpv.log";
+}
+
+// The last few lines of what mpv said, for when it refuses to play something.
+std::string tailOfMpvLog(int lines) {
+    std::ifstream in(mpvLogPath(), std::ios::binary);
+    if (!in) return {};
+    std::vector<std::string> all;
+    std::string line;
+    while (std::getline(in, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+        if (!line.empty()) all.push_back(line);
+    }
+    std::string out;
+    for (size_t i = all.size() > static_cast<size_t>(lines) ? all.size() - lines : 0;
+         i < all.size(); ++i) {
+        if (!out.empty()) out += " | ";
+        out += all[i];
+    }
+    return out;
+}
+
 std::string findMpv() {
     if (const char* env = std::getenv("TSUZUKI_MPV")) {
         if (*env) return env;
@@ -642,6 +669,10 @@ void playFile(Engine& e, int index) {
                      std::to_string(static_cast<int>(at) % 60) + "s");
     }
     cmd += " --force-window=yes --cache=yes --demuxer-max-bytes=200MiB";
+    // Warnings and errors only, and no per-frame status line - the log exists
+    // to explain a refusal, and mpv writes tens of thousands of status lines a
+    // minute otherwise.
+    cmd += " --msg-level=all=warn --term-status-msg=";
     cmd += " \"" + path + "\"";
 
     {
@@ -712,8 +743,26 @@ void playFile(Engine& e, int index) {
     std::vector<char> mutableCmd(cmd.begin(), cmd.end());
     mutableCmd.push_back('\0');
 
-    if (!CreateProcessA(nullptr, mutableCmd.data(), nullptr, nullptr, FALSE, 0, nullptr,
-                        nullptr, &si, &pi)) {
+    // Capture what mpv says. When it refuses a file it explains why on its
+    // way out, and throwing that away turned every such refusal into the
+    // player silently backing out with no reason given anywhere.
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    const std::string logPath = mpvLogPath();
+    HANDLE logFile = CreateFileA(logPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa,
+                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    const bool haveLog = logFile != INVALID_HANDLE_VALUE;
+    if (haveLog) {
+        si.dwFlags |= STARTF_USESTDHANDLES;
+        si.hStdOutput = logFile;
+        si.hStdError = logFile;
+        si.hStdInput = nullptr;
+    }
+
+    if (!CreateProcessA(nullptr, mutableCmd.data(), nullptr, nullptr, haveLog ? TRUE : FALSE,
+                        0, nullptr, nullptr, &si, &pi)) {
+        if (haveLog) CloseHandle(logFile);
         e.videoActive = false;
         if (g_playbackHook) g_playbackHook(false);
         e.setMessage("Could not start mpv. Is it installed?");
@@ -721,6 +770,10 @@ void playFile(Engine& e, int index) {
         e.playing = false;
         return;
     }
+
+    // mpv has its own copy now; holding this one open would keep the file
+    // locked and leave the log unreadable while playing.
+    if (haveLog) CloseHandle(logFile);
 
     // ---- rolling window ------------------------------------------------
     //
@@ -838,6 +891,13 @@ void playFile(Engine& e, int index) {
 
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+
+    // mpv quitting without ever reporting a position means it would not play
+    // the file, rather than that someone watched it. Say what it said.
+    const bool refusedToPlay = lastPosition <= 0.01;
+    std::string mpvSaid;
+    if (refusedToPlay) mpvSaid = tailOfMpvLog(4);
+
     // Nothing is being watched any more, so nothing should still be arriving.
     wantNothing(e);
     e.videoActive = false;
@@ -851,7 +911,7 @@ void playFile(Engine& e, int index) {
                                ? std::max(180.0, lastDuration / 10.0)
                                : 0.0;
     const bool finished = lastDuration > 0 && (lastDuration - fromEnd) < lastPosition;
-    if (lastDuration > 0) {
+    if (lastDuration > 0 && !refusedToPlay) {
         // Marked finished rather than deleted: Continue Watching filters
         // completed episodes out anyway, and keeping the row is what stops a
         // replayed completion from looking like a brand new watch.
@@ -874,6 +934,16 @@ void playFile(Engine& e, int index) {
     // the whole torrent down here meant the file list on screen pointed at
     // something that no longer existed, so picking a second episode from the
     // same batch failed with "that file is no longer available".
+    if (refusedToPlay) {
+        e.setMessage(mpvSaid.empty()
+                         ? "mpv opened that file and closed again without playing it."
+                         : "mpv would not play that file: " + mpvSaid);
+        if (g_playbackHook) g_playbackHook(false);
+        e.done = true;
+        e.playing = false;
+        return;  // leave the download alone so it can be retried
+    }
+
     e.setMessage("Finished. Removing that episode...");
     e.handle.file_priority(fidx, lt::dont_download);
 
