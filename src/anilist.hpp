@@ -38,7 +38,9 @@ struct Details {
     int id = 0;
     int episodes = 0;
     int duration = 0;  // minutes
-    std::string title;
+    std::string title;    // romaji, or english when there is no romaji
+    std::string english;  // empty when AniList has no english title
+    std::string native;
     std::string description;  // plain text
     std::string coverImage;
     std::string bannerImage;

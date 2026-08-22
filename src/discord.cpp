@@ -117,18 +117,40 @@ bool connected() {
 #endif
 }
 
-void setWatching(const std::string& show, const std::string& episode, bool paused) {
+void setWatching(const Presence& p) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!openPipe(g_clientId)) return;
 
     json activity;
-    activity["details"] = show.empty() ? "Browsing" : show;
-    if (!episode.empty()) activity["state"] = (paused ? "Paused - " : "") + episode;
-    activity["timestamps"] = json::object();
-    if (!paused && !show.empty()) {
-        activity["timestamps"]["start"] = static_cast<std::int64_t>(std::time(nullptr));
+    activity["details"] = p.show.empty() ? "Browsing" : p.show;
+    if (!p.episode.empty()) {
+        activity["state"] = (p.paused ? "Paused - " : "") + p.episode;
     }
-    activity["assets"] = {{"large_image", "tsuzuki"}, {"large_text", "Tsuzuki"}};
+
+    // An end timestamp makes Discord count down the time left, which is far
+    // more use for an episode than counting up how long it has been open.
+    // Paused shows neither: a frozen clock would just be wrong.
+    activity["timestamps"] = json::object();
+    if (!p.paused && !p.show.empty() && p.remaining > 1) {
+        activity["timestamps"]["end"] =
+            static_cast<std::int64_t>(std::time(nullptr) + static_cast<long long>(p.remaining));
+    }
+
+    // The cover goes in the large slot as a plain URL - modern Discord
+    // clients resolve external images in RPC assets - with the app logo
+    // demoted to the small badge so it still says what is playing this. If
+    // there is no cover, the logo takes the large slot instead.
+    json assets;
+    if (!p.imageUrl.empty()) {
+        assets["large_image"] = p.imageUrl;
+        assets["large_text"] = p.show.empty() ? "Tsuzuki" : p.show;
+        assets["small_image"] = "tsuzuki";
+        assets["small_text"] = "Tsuzuki";
+    } else {
+        assets["large_image"] = "tsuzuki";
+        assets["large_text"] = "Tsuzuki";
+    }
+    activity["assets"] = assets;
 
     const json frame{{"cmd", "SET_ACTIVITY"},
                      {"nonce", std::to_string(std::time(nullptr))},

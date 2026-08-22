@@ -87,6 +87,11 @@ struct Engine {
     // explicit resume point in seconds.
     double resumeFrom = -1;
     std::string showTitle;
+    // AniList's english title when it has one. Discord shows this, because
+    // "Smoking Behind the Supermarket with You" tells anyone reading your
+    // status what you are watching and "Super no Ura de Yani Suu Futari"
+    // does not.
+    std::string showTitleEnglish;
     std::string showCover;
 
     std::atomic<bool> playing{false};
@@ -414,6 +419,7 @@ bool openTorrent(Engine& e, const std::string& magnet, std::string& err) {
     e.files = scanFiles(raw);
     e.openMagnet = magnet;
     e.showTitle.clear();
+    e.showTitleEnglish.clear();
     e.showCover.clear();
     e.anilistId = 0;
     e.runtimeMinutes = 0;
@@ -670,13 +676,25 @@ void playFile(Engine& e, int index) {
     //  - Discord gets the show and episode. setWatching had never been
     //    called from anywhere, so the presence stayed empty however it was
     //    configured.
+    // English first for the status line, romaji next, and the release name
+    // only if AniList knew nothing at all.
+    const auto presenceFor = [&](double remaining, bool paused) {
+        discord::Presence p;
+        p.show = !e.showTitleEnglish.empty() ? e.showTitleEnglish
+                 : !e.showTitle.empty()      ? e.showTitle
+                                             : e.info->name();
+        p.episode = watchedEp > 0 ? "Episode " + std::to_string(watchedEp) : chosen->name;
+        p.imageUrl = e.showCover;
+        p.remaining = remaining;
+        p.paused = paused;
+        return p;
+    };
+
     {
-        const std::string show = e.showTitle.empty() ? e.info->name() : e.showTitle;
         if (cfg.syncProgress && e.anilistId > 0) library::markWatching(e.anilistId);
         if (cfg.discordPresence) {
-            const std::string ep =
-                watchedEp > 0 ? "Episode " + std::to_string(watchedEp) : chosen->name;
-            discord::setWatching(show, ep, false);
+            const double runtime = e.runtimeMinutes > 0 ? e.runtimeMinutes * 60.0 : 0.0;
+            discord::setWatching(presenceFor(runtime, false));
         }
     }
 
@@ -710,6 +728,7 @@ void playFile(Engine& e, int index) {
     double lastPosition = 0, lastDuration = 0, lastSaved = 0;
     double lastSample = 0;
     bool wasPaused = false, sampled = false;
+    DWORD lastPresence = 0;
     // A silent IPC failure used to look exactly like a normal watch: the video
     // played, and nothing else worked. Notice it and say so instead.
     const auto playbackStart = std::chrono::steady_clock::now();
@@ -747,11 +766,17 @@ void playFile(Engine& e, int index) {
         // loop runs twice a second, so anything past three seconds of movement
         // in one iteration was the user, not playback.
         const bool paused = ps.paused && !wasPaused;
-        if (cfg.discordPresence && ps.paused != wasPaused) {
-            const std::string show = e.showTitle.empty() ? e.info->name() : e.showTitle;
-            const std::string ep =
-                watchedEp > 0 ? "Episode " + std::to_string(watchedEp) : chosen->name;
-            discord::setWatching(show, ep, ps.paused);
+
+        // Discord rate-limits activity updates, so the countdown is only
+        // corrected every fifteen seconds - and immediately on a pause, which
+        // is the one change worth spending an update on.
+        if (cfg.discordPresence) {
+            const DWORD now = GetTickCount();
+            if (ps.paused != wasPaused || now - lastPresence > 15000) {
+                lastPresence = now;
+                const double left = duration > ps.position ? duration - ps.position : 0.0;
+                discord::setWatching(presenceFor(left, ps.paused));
+            }
         }
         const bool seeked = sampled && std::fabs(ps.position - lastSample) > 3.0;
         const bool ticked = lastSaved == 0 || std::fabs(ps.position - lastSaved) >= 5.0;
@@ -987,6 +1012,7 @@ OpenOutcome open(const std::string& magnet, int episode, int anilistId) {
             e.totalEpisodes = d.episodes;
             e.anilistId = d.id;
             e.showTitle = d.title;
+            e.showTitleEnglish = d.english;
             e.showCover = d.coverImage;
         }
     }

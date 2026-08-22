@@ -29,9 +29,17 @@ std::string resolveClientId(const std::string& fromSettings);
 // Connects if Discord is running. Safe to call repeatedly.
 bool connect(const std::string& clientId);
 
-// Shows "Watching <show>" with the episode as the detail line. Empty show
-// clears the presence.
-void setWatching(const std::string& show, const std::string& episode, bool paused);
+struct Presence {
+    std::string show;
+    std::string episode;   // "Episode 7"
+    std::string imageUrl;  // cover art; the app logo is used when empty
+    double remaining = 0;  // seconds left, so Discord can count down
+    bool paused = false;
+};
+
+// Shows the cover, the show and the episode, with time remaining. An empty
+// show clears the presence.
+void setWatching(const Presence&);
 
 void clear();
 void disconnect();

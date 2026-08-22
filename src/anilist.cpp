@@ -96,7 +96,7 @@ query ($id: Int) {
     id
     episodes
     duration
-    title { romaji english }
+    title { romaji english native }
     description(asHtml: false)
     coverImage { extraLarge large color }
     bannerImage
@@ -167,7 +167,9 @@ bool details(int id, Details& out) {
 
     const auto& t = m["title"];
     out.title = pick(t, "romaji");
-    if (out.title.empty()) out.title = pick(t, "english");
+    out.english = pick(t, "english");
+    out.native = pick(t, "native");
+    if (out.title.empty()) out.title = out.english;
 
     if (m.contains("description") && m["description"].is_string()) {
         out.description = stripTags(m["description"].get<std::string>());
