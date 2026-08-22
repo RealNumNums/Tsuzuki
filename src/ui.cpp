@@ -24,6 +24,7 @@
 #include <ctime>
 #include <fstream>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -1125,9 +1126,42 @@ SearchOutcome search(const std::string& q, int resolution) {
 
 std::vector<std::string> genreList() { return anilist::genres(); }
 
+namespace {
+
+// Shelves change on the order of hours, not seconds, so flipping between
+// genres should not cost a request every time. Ten minutes keeps "trending"
+// honest while making the common case - looking at three genres and coming
+// back - free.
+struct CachedShelves {
+    std::vector<Shelf> shelves;
+    long long at = 0;
+    bool adult = false;
+};
+std::mutex g_shelfMutex;
+std::map<std::string, CachedShelves> g_shelfCache;
+constexpr long long kShelfTtlMs = 10 * 60 * 1000;
+
+long long nowMillis() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+}  // namespace
+
 Discovery discover(const std::string& genre) {
     const Settings cfg = currentSettings();
     Discovery out;
+
+    {
+        std::lock_guard<std::mutex> lock(g_shelfMutex);
+        const auto it = g_shelfCache.find(genre);
+        if (it != g_shelfCache.end() && it->second.adult == cfg.showAdult &&
+            nowMillis() - it->second.at < kShelfTtlMs) {
+            out.shelves = it->second.shelves;
+            return out;
+        }
+    }
 
     std::string error;
     for (const auto& s : anilist::discoverShelves(genre, cfg.showAdult, &error)) {
@@ -1148,6 +1182,18 @@ Discovery discover(const std::string& genre) {
         out.shelves.push_back(std::move(shelf));
     }
     out.error = error;
+
+    std::lock_guard<std::mutex> lock(g_shelfMutex);
+    if (!out.shelves.empty()) {
+        g_shelfCache[genre] = CachedShelves{out.shelves, nowMillis(), cfg.showAdult};
+    } else {
+        // Refused or unreachable. Stale shelves beat an error message, so
+        // show what was there last time and keep the reason to one side.
+        const auto it = g_shelfCache.find(genre);
+        if (it != g_shelfCache.end() && !it->second.shelves.empty()) {
+            out.shelves = it->second.shelves;
+        }
+    }
     return out;
 }
 

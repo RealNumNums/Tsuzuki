@@ -1,5 +1,7 @@
 #include "track.hpp"
 
+#include <chrono>
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -38,6 +40,13 @@ std::mutex g_mutex;
 std::string g_token;
 Account g_account;
 bool g_accountFetched = false;
+long long g_accountFailedAt = 0;
+
+long long nowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
 
 std::string authPath() {
     const char* base = std::getenv("LOCALAPPDATA");
@@ -223,6 +232,14 @@ Account account(bool force) {
         std::lock_guard<std::mutex> lock(g_mutex);
         if (g_accountFetched && !force) return g_account;
         if (g_token.empty()) return Account{};
+
+        // Only a success used to be remembered, so a failed lookup was
+        // retried on the very next call. The settings screen asks once per
+        // frame, which meant a request per frame the moment AniList was
+        // unreachable or rate limiting - hammering it exactly when it was
+        // already saying no. A failure is now worth thirty seconds of quiet.
+        const long long now = nowMs();
+        if (!force && now - g_accountFailedAt < 30000) return g_account;
     }
 
     const std::string tok = token();
@@ -252,6 +269,11 @@ Account account(bool force) {
     // Anything else - no network, a timeout, a 500, an unparseable body - is
     // temporary, and throwing the token away over it silently signs the user
     // out. That is what kept happening.
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_accountFailedAt = nowMs();
+    }
+
     const bool rejected = r.reachedServer && (r.status == 400 || r.status == 401);
     if (rejected) {
         std::lock_guard<std::mutex> lock(g_mutex);

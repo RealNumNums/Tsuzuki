@@ -642,7 +642,12 @@ bool drainQueue() {
                 }
             } else {
                 ++it->attempts;
-                it->nextAttemptAt = nowMs() + backoffMs(it->attempts);
+                // A refusal for being too chatty is not the same as a failed
+                // write, and retrying it on the usual two second curve is how
+                // a rate limit turns into a longer rate limit.
+                const long long wait =
+                    (std::max)(backoffMs(it->attempts), static_cast<long long>(60000));
+                it->nextAttemptAt = nowMs() + wait;
                 it->lastError = "AniList did not accept the update";
                 g_lastError = it->lastError;
                 // Twenty attempts is well over an hour of backoff. Past that
