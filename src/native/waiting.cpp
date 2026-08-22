@@ -56,7 +56,7 @@ void shimmer(Ui& u, const Rect& bar, float radius) {
     const Rect band{x, bar.y, bandW, bar.h};
     // Clipped to the bar so the sweep cannot run past either end.
     u.c.pushClip(bar);
-    u.c.gradient(band, gfx::rgb(0xFFFFFF, 0.0f), gfx::rgb(0xFFFFFF, 0.16f), radius);
+    u.c.gradient(band, fg.withAlpha(0.0f), fg.withAlpha(0.16f), radius);
     u.c.popClip();
 }
 
@@ -84,7 +84,7 @@ bool waitingPanel(Ui& u, State& st, const std::wstring& heading) {
 
     // ---- progress -------------------------------------------------------
     const Rect bar{panel.x + 24, y, panel.w - 48, 8};
-    u.c.fill(bar, gfx::rgb(0x22222E), 4);
+    u.c.fill(bar, cardHover, 4);
     const float frac = (std::max)(0.0f, (std::min)(1.0f, s.progress / 100.0f));
     if (frac > 0.001f) {
         u.c.fill({bar.x, bar.y, bar.w * frac, bar.h}, accent, 4);
@@ -115,7 +115,7 @@ bool waitingPanel(Ui& u, State& st, const std::wstring& heading) {
                 const float t = static_cast<float>(GetTickCount() % 1200) / 1200.0f;
                 alpha = 0.45f + 0.55f * (0.5f + 0.5f * std::sin(t * 6.2831853f + i));
             }
-            u.c.fill({x, y, dot, dot}, on ? accent.withAlpha(alpha) : gfx::rgb(0x2A2A38),
+            u.c.fill({x, y, dot, dot}, on ? accent.withAlpha(alpha) : line,
                      dot / 2);
             x += dot + gap;
         }
@@ -136,7 +136,7 @@ bool waitingPanel(Ui& u, State& st, const std::wstring& heading) {
     // ---- give up --------------------------------------------------------
     const Rect cancel{panel.cx() - 60, panel.bottom() - 46, 120, 32};
     const bool hot = u.clickable(6001, cancel);
-    u.c.fill(cancel, u.hover(6001) > 0.1f ? gfx::rgb(0x2C2C3A) : gfx::rgb(0x20202B), 8);
+    u.c.fill(cancel, u.hover(6001) > 0.1f ? line : cardHover, 8);
     u.c.stroke(cancel, line, 8);
     u.c.text(L"Cancel", {cancel.x, cancel.y + 7, cancel.w, 18}, fg,
              f(12.5f, gfx::Weight::Semibold, gfx::Align::Center));

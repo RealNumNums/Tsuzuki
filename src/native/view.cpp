@@ -56,7 +56,7 @@ bool dismiss(Ui& u, int id, const Rect& r, float reveal) {
     }
     const bool clicked = u.clickable(id, r);
     const float h = u.hover(id);
-    u.c.fill(r, h > 0.1f ? gfx::rgb(0xE05F5F, reveal) : gfx::rgb(0x000000, 0.55f * reveal),
+    u.c.fill(r, h > 0.1f ? bad.withAlpha(reveal) : shade.withAlpha(0.55f * reveal),
              r.w / 2);
     u.c.text(L"\u00D7", {r.x, r.y + 1, r.w, r.h}, gfx::rgb(0xFFFFFF, reveal),
              f(15, gfx::Weight::Bold, gfx::Align::Center));
@@ -86,7 +86,7 @@ void sectionHeader(Ui& u, const std::wstring& title, const std::wstring& note, f
 // A cover with a dark scrim under it, so overlaid text stays readable whatever
 // the artwork is doing.
 void coverArt(Ui& u, const std::string& url, const Rect& r, float radius) {
-    u.c.fill(r, gfx::rgb(0x12121A), radius);
+    u.c.fill(r, card, radius);
     if (ID2D1Bitmap* bmp = images::get(url)) {
         u.c.image(bmp, r, radius);
     }
@@ -106,12 +106,18 @@ float heroBanner(Ui& u, State& st, float top, bool& wantMore) {
 
     // Artwork first, then enough shading over it that text stays readable on
     // whatever happens to be underneath.
-    u.c.fill(band, gfx::rgb(0x0E0E14));
+    u.c.fill(band, panel);
     const std::string art = st.hero.banner.empty() ? st.hero.cover : st.hero.banner;
     if (ID2D1Bitmap* bmp = images::get(art)) u.c.image(bmp, band);
 
-    u.c.gradient(band, shade.withAlpha(0.30f), shade.withAlpha(0.94f));
-    u.c.gradient({band.x, band.bottom() - 120, band.w, 120}, bg.withAlpha(0.0f), bg);
+    // Only as much shading as the words need. A full top-to-bottom scrim made
+    // every banner a dark smear; this keeps the right two thirds of the
+    // artwork at something close to its own brightness.
+    const float textBand = std::min(760.0f, w * 0.62f);
+    u.c.gradientH({band.x, band.y, textBand, band.h}, shade.withAlpha(0.90f),
+                  shade.withAlpha(0.0f));
+    u.c.gradient(band, shade.withAlpha(0.10f), shade.withAlpha(0.42f));
+    u.c.gradient({band.x, band.bottom() - 96, band.w, 96}, bg.withAlpha(0.0f), bg);
 
     const float textW = std::min(620.0f, w - kPad * 2);
     float ty = band.y + 52;
@@ -150,11 +156,11 @@ float heroBanner(Ui& u, State& st, float top, bool& wantMore) {
             const float pillW = static_cast<float>(chips[i].size()) * 6.6f + 18;
             const Rect pill{cx, ty, pillW, 22};
             const bool isScore = i == 0 && st.hero.score > 0;
-            u.c.fill(pill, isScore ? accent.withAlpha(0.18f) : gfx::rgb(0x1A1A24).withAlpha(0.85f),
+            u.c.fill(pill, isScore ? accent.withAlpha(0.18f) : cardHover.withAlpha(0.85f),
                      11);
             u.c.stroke(pill, isScore ? accent.withAlpha(0.5f) : line, 11);
             u.c.text(chips[i], {pill.x, pill.y + 3, pill.w, 16},
-                     isScore ? accent : gfx::rgb(0xC8C8D4),
+                     isScore ? accent : fg.withAlpha(0.82f),
                      f(11.5f, gfx::Weight::Semibold, gfx::Align::Center));
             cx += pillW + 7;
         }
@@ -165,7 +171,7 @@ float heroBanner(Ui& u, State& st, float top, bool& wantMore) {
     if (!st.hero.description.empty()) {
         Font body = f(13);
         body.wrap = true;
-        u.c.text(widen(st.hero.description), {kPad, ty, textW, 60}, gfx::rgb(0xB4B4C2), body);
+        u.c.text(widen(st.hero.description), {kPad, ty, textW, 60}, fg.withAlpha(0.75f), body);
         ty += 70;
     }
 
@@ -180,10 +186,10 @@ float heroBanner(Ui& u, State& st, float top, bool& wantMore) {
             const int id = 700 + static_cast<int>(i);
             const bool hot = u.clickable(id, pill);
             if (u.hover(id) > 0 && u.hover(id) < 1) wantMore = true;
-            u.c.fill(pill, u.hover(id) > 0.1f ? accent.withAlpha(0.22f) : gfx::rgb(0x16161F),
+            u.c.fill(pill, u.hover(id) > 0.1f ? accent.withAlpha(0.22f) : card,
                      12);
             u.c.stroke(pill, u.hover(id) > 0.1f ? accent : line, 12);
-            u.c.text(g, {pill.x, pill.y + 4, pill.w, 16}, gfx::rgb(0xD0D0DC),
+            u.c.text(g, {pill.x, pill.y + 4, pill.w, 16}, fg.withAlpha(0.85f),
                      f(11.5f, gfx::Weight::Medium, gfx::Align::Center));
             if (hot) {
                 st.genre = g;
@@ -215,13 +221,13 @@ float heroBanner(Ui& u, State& st, float top, bool& wantMore) {
         const float h = u.hover(710);
         if (h > 0 && h < 1) wantMore = true;
         u.c.fill(go, h > 0.1f ? accentSoft : accent, 10);
-        u.c.text(label, {go.x, go.y + 11, go.w, 20}, gfx::rgb(0x2A0D18),
+        u.c.text(label, {go.x, go.y + 11, go.w, 20}, gfx::onAccent(),
                  f(13.5f, gfx::Weight::Semibold, gfx::Align::Center));
 
         // How far in you already are, under the button.
         if (resuming) {
             const Rect track{go.x, go.bottom() + 10, go.w, 3};
-            u.c.fill(track, gfx::rgb(0x2A2A36), 1.5f);
+            u.c.fill(track, line, 1.5f);
             u.c.fill({track.x, track.y, track.w * st.hero.percent / 100.0f, track.h}, accent,
                      1.5f);
         }
@@ -366,15 +372,15 @@ bool navRail(Ui& u, State& st, RailTip& tip) {
     const float h = u.c.bounds().h;
     bool wantMore = false;
 
-    u.c.fill({0, 0, kRailW, h}, gfx::rgb(0x0C0C12));
+    u.c.fill({0, 0, kRailW, h}, panel);
     u.c.fill({kRailW - 1, 0, 1, h}, line);
 
     // The mark, which doubles as the way home.
     {
         const Rect logo{(kRailW - 32) / 2, 16, 32, 32};
         const bool hot = u.clickable(9100, logo);
-        u.c.gradient(logo, accent, gfx::rgb(0xB0295A), 9);
-        u.c.text(L"続", {logo.x, logo.y + 6, logo.w, 22}, gfx::rgb(0xFFFFFF),
+        u.c.gradient(logo, accentSoft, accent, 9);
+        u.c.text(L"続", {logo.x, logo.y + 6, logo.w, 22}, gfx::onAccent(),
                  f(15, gfx::Weight::Bold, gfx::Align::Center));
         if (hot) st.screen = Screen::Home;
     }
@@ -408,10 +414,10 @@ bool navRail(Ui& u, State& st, RailTip& tip) {
         if (on) {
             u.c.fill(pill, accent, 11);
         } else if (hv > 0.05f) {
-            u.c.fill(pill, gfx::rgb(0x1C1C26).withAlpha(hv), 11);
+            u.c.fill(pill, cardHover.withAlpha(hv), 11);
         }
         u.c.text(items[i].glyph, {pill.x, pill.y + 11, pill.w, 22},
-                 on ? gfx::rgb(0x2A0D18) : (hv > 0.1f ? fg : gfx::rgb(0x8A8A9A)), glyphFont);
+                 on ? gfx::onAccent() : (hv > 0.1f ? fg : dim), glyphFont);
 
         // The label only appears when you go looking for it, so the rail stays
         // as quiet as the reference it is modelled on. Drawn later, on top.
@@ -436,7 +442,7 @@ void railTooltip(Ui& u, const RailTip& tip) {
     if (!tip.label) return;
     const float tw = static_cast<float>(wcslen(tip.label)) * 6.8f + 20;
     const Rect box{kRailW + 8, tip.y, tw, 24};
-    u.c.fill(box, gfx::rgb(0x1E1E28), 6);
+    u.c.fill(box, cardHover, 6);
     u.c.stroke(box, line, 6);
     u.c.text(tip.label, {box.x, box.y + 4, box.w, 16}, fg,
              f(11.5f, gfx::Weight::Medium, gfx::Align::Center));
@@ -449,7 +455,7 @@ bool header(Ui& u, State& st) {
     const float w = u.c.bounds().w;
     bool submit = false;
 
-    u.c.fill({0, 0, w, kHeaderH}, gfx::rgb(0x0E0E14));
+    u.c.fill({0, 0, w, kHeaderH}, panel);
     u.c.fill({0, kHeaderH - 1, w, 1}, line);
 
     // Search field. It has the header to itself now that the destinations
@@ -457,7 +463,7 @@ bool header(Ui& u, State& st) {
     const Rect box{kPad, 14, w - kPad * 2 - 180, 34};
     const bool overBox = box.contains(u.mouseX(), u.mouseY());
     if (u.in.mousePressed) st.queryFocused = overBox;
-    u.c.fill(box, gfx::rgb(0x16161F), 9);
+    u.c.fill(box, card, 9);
     u.c.stroke(box, st.queryFocused ? accent : line, 9);
 
     const Rect textArea = {box.x + 12, box.y + 8, box.w - 24, 20};
@@ -473,7 +479,7 @@ bool header(Ui& u, State& st) {
 
     // Episode box
     const Rect epBox{box.right() + 10, 14, 68, 34};
-    u.c.fill(epBox, gfx::rgb(0x16161F), 9);
+    u.c.fill(epBox, card, 9);
     u.c.stroke(epBox, line, 9);
     u.c.text(st.episodeWanted.empty() ? L"Ep #" : st.episodeWanted,
              {epBox.x + 10, epBox.y + 8, epBox.w - 16, 20},
@@ -483,7 +489,7 @@ bool header(Ui& u, State& st) {
     const Rect go{epBox.right() + 10, 14, 92, 34};
     const bool hot = u.clickable(9001, go);
     u.c.gradient(go, hot ? accentSoft : accent, accent, 9);
-    u.c.text(L"Search", {go.x, go.y + 8, go.w, 20}, gfx::rgb(0x2A0D18),
+    u.c.text(L"Search", {go.x, go.y + 8, go.w, 20}, gfx::onAccent(),
              f(13.5f, gfx::Weight::Semibold, gfx::Align::Center));
     if (hot) submit = true;
 
@@ -511,7 +517,7 @@ void syncBadge(Ui& u) {
 
     Color dot = good;
     if (s.state == library::SyncState::NotLinked) {
-        dot = gfx::rgb(0x5A5A68);
+        dot = dim.withAlpha(0.7f);
     } else if (s.state == library::SyncState::Retrying) {
         dot = bad;
     } else if (s.state == library::SyncState::Syncing || s.pending > 0) {
@@ -602,7 +608,7 @@ bool home(Ui& u, State& st) {
         const Rect go{u.c.bounds().cx() - 80, kHeaderH + 146, 160, 38};
         const bool hot = u.clickable(140, go);
         u.c.fill(go, u.hover(140) > 0.1f ? accentSoft : accent, 9);
-        u.c.text(L"Discover", {go.x, go.y + 10, go.w, 20}, gfx::rgb(0x2A0D18),
+        u.c.text(L"Discover", {go.x, go.y + 10, go.w, 20}, gfx::onAccent(),
                  f(13, gfx::Weight::Semibold, gfx::Align::Center));
         if (hot) st.screen = Screen::Discover;
 
@@ -651,7 +657,7 @@ bool home(Ui& u, State& st) {
             u.c.text(badge, {art.x + 10, art.bottom() - 30, art.w - 20, 18}, fg,
                      f(12, gfx::Weight::Semibold));
             u.c.text(formatTime(e.remaining()) + L" left",
-                     {art.x + 10, art.bottom() - 30, art.w - 20, 18}, gfx::rgb(0xDCDCE6),
+                     {art.x + 10, art.bottom() - 30, art.w - 20, 18}, fg.withAlpha(0.88f),
                      f(11.5f, gfx::Weight::Regular, gfx::Align::Right));
 
             // Progress bar along the bottom of the artwork.
@@ -792,9 +798,9 @@ bool home(Ui& u, State& st) {
             u.c.text(widen(h.torrent), {tx, row.y + 47, row.w - tx - 150, 16}, dim, f(11.5f));
 
             const Rect open{row.right() - 130, row.y + 18, 80, 30};
-            u.c.fill(open, hv > 0.1f ? accent : gfx::rgb(0x22222E), 8);
+            u.c.fill(open, hv > 0.1f ? accent : cardHover, 8);
             u.c.text(L"Open", {open.x, open.y + 7, open.w, 18},
-                     hv > 0.1f ? gfx::rgb(0x2A0D18) : fg,
+                     hv > 0.1f ? gfx::onAccent() : fg,
                      f(12.5f, gfx::Weight::Semibold, gfx::Align::Center));
 
             const Rect hx{row.right() - 38, row.y + 22, 22, 22};

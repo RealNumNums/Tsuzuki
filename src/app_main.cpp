@@ -242,7 +242,7 @@ void updateOverlay(HWND hwnd) {
 
 void renderOverlay() {
     using namespace tsuzuki;
-    if (!g_overlayCanvas.begin(gfx::rgb(0x0E0E14))) return;
+    if (!g_overlayCanvas.begin(gfx::theme::panel)) return;
     g_overlayUi.beginFrame();
     view::playerStrip(g_overlayUi, g_state);
     g_overlayUi.endFrame();
@@ -729,6 +729,10 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int showCmd) {
 
     // libtorrent and httplib both use sockets from several threads.
     if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) return 1;
+
+    // The theme before the first frame, so nothing paints in the wrong
+    // palette and then corrects itself.
+    tsuzuki::gfx::useTheme(tsuzuki::ui::settings().theme);
 
     if (!tsuzuki::gfx::init()) {
         fatal(nullptr, L"Could not start Direct2D. A graphics driver update may be needed.");

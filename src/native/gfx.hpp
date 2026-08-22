@@ -18,6 +18,7 @@
 #include <windows.h>
 
 #include <string>
+#include <vector>
 
 // Forward declared at global scope: writing it inside the namespace below
 // would declare a different, unrelated type.
@@ -50,22 +51,50 @@ struct Rect {
     Rect offset(float dx, float dy) const { return {x + dx, y + dy, w, h}; }
 };
 
-// The palette the page used, kept so the native interface looks like the same
-// product rather than a different one.
+// The live palette.
+//
+// Deliberately variables rather than constants: every screen reads these by
+// name, so switching a theme is one write per token and no screen needs to
+// know that themes exist at all. Only ever written from useTheme(), on the
+// interface thread, between frames.
 namespace theme {
-inline constexpr Color bg = rgb(0x0B0B10);
-inline constexpr Color card = rgb(0x14141C);
-inline constexpr Color cardHover = rgb(0x1A1A24);
-inline constexpr Color line = rgb(0x262633);
-inline constexpr Color fg = rgb(0xECECF2);
-inline constexpr Color dim = rgb(0x8A8A99);
-inline constexpr Color accent = rgb(0xFF5C8A);
-inline constexpr Color accentSoft = rgb(0xFF9DBB);
-inline constexpr Color good = rgb(0x4AC97E);
-inline constexpr Color warn = rgb(0xE0B341);
-inline constexpr Color bad = rgb(0xE05F5F);
-inline constexpr Color shade = rgb(0x000000);
+inline Color bg = rgb(0x08080A);
+inline Color panel = rgb(0x0D0D0F);  // header and rail chrome
+inline Color card = rgb(0x121214);
+inline Color cardHover = rgb(0x1B1B1E);
+inline Color line = rgb(0x2A2A2E);
+inline Color fg = rgb(0xF2F2F4);
+inline Color dim = rgb(0x8C8C93);
+inline Color accent = rgb(0xE8E8EC);
+inline Color accentSoft = rgb(0xFFFFFF);
+inline Color good = rgb(0xC8C8CE);
+inline Color warn = rgb(0xA8A8B0);
+inline Color bad = rgb(0xD46A6A);
+inline Color shade = rgb(0x000000);
 }  // namespace theme
+
+// A complete named palette. The interface never holds one of these; it reads
+// the live tokens above, which useTheme() fills in from the chosen palette.
+struct Palette {
+    const char* key;
+    const wchar_t* name;
+    Color bg, panel, card, cardHover, line, fg, dim, accent, accentSoft, good, warn, bad,
+        shade;
+    // Whether text on this background is dark - a light theme needs the
+    // opposite ink on its accent-filled buttons.
+    bool light = false;
+};
+
+// Everything the selector offers, the shipped default first.
+const std::vector<Palette>& palettes();
+
+// Repaints the tokens. An unrecognised key falls back to the default rather
+// than leaving the interface half-themed.
+void useTheme(const std::string& key);
+const Palette& currentPalette();
+
+// The ink to put on an accent-filled button, which differs per theme.
+Color onAccent();
 
 enum class Weight { Regular, Medium, Semibold, Bold };
 enum class Align { Left, Center, Right };
@@ -125,6 +154,10 @@ class Canvas {
     // Vertical gradient - used for the scrim under cover art so white text
     // stays readable whatever the image behind it is doing.
     void gradient(const Rect&, Color top, Color bottom, float radius = 0);
+    // Left to right. The banner needs one: shading the whole image top-down
+    // to make the text readable buries the artwork, whereas shading only the
+    // side the text is on leaves the picture visible.
+    void gradientH(const Rect&, Color leftColor, Color rightColor, float radius = 0);
 
     void text(const std::wstring&, const Rect&, Color, const Font&);
     // Height the string needs at this width, for laying out before drawing.

@@ -290,6 +290,27 @@ void Canvas::gradient(const Rect& r, Color top, Color bottom, float radius) {
     release(collection);
 }
 
+void Canvas::gradientH(const Rect& r, Color leftColor, Color rightColor, float radius) {
+    if (!ctx_) return;
+    D2D1_GRADIENT_STOP stops[2] = {{0.0f, toD2D(leftColor)}, {1.0f, toD2D(rightColor)}};
+    ID2D1GradientStopCollection* collection = nullptr;
+    if (FAILED(ctx_->CreateGradientStopCollection(stops, 2, &collection))) return;
+
+    ID2D1LinearGradientBrush* g = nullptr;
+    ctx_->CreateLinearGradientBrush(
+        D2D1::LinearGradientBrushProperties(D2D1::Point2F(r.x, r.y), D2D1::Point2F(r.right(), r.y)),
+        collection, &g);
+    if (g) {
+        if (radius > 0) {
+            ctx_->FillRoundedRectangle(D2D1::RoundedRect(toD2D(r), radius, radius), g);
+        } else {
+            ctx_->FillRectangle(toD2D(r), g);
+        }
+        release(g);
+    }
+    release(collection);
+}
+
 IDWriteTextFormat* Canvas::format(const Font& f) {
     const FormatKey key{f.size,       static_cast<int>(f.weight), static_cast<int>(f.align),
                         f.wrap,        f.lineHeight,               f.icon};

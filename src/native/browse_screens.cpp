@@ -54,7 +54,7 @@ void chip(Ui& u, float& x, float y, const std::wstring& text, Color bg, Color fg
 void backButton(Ui& u, State& st, float y, Screen to, const wchar_t* label) {
     const Rect b{kPad, y, 150, 30};
     const bool hot = u.clickable(8000, b);
-    u.c.fill(b, u.hover(8000) > 0.1f ? gfx::rgb(0x22222E) : gfx::rgb(0x16161F), 8);
+    u.c.fill(b, u.hover(8000) > 0.1f ? cardHover : card, 8);
     u.c.stroke(b, line, 8);
     u.c.text(label, {b.x, b.y + 6, b.w, 18}, dim, f(12.5f, gfx::Weight::Medium, gfx::Align::Center));
     if (hot) st.screen = to;
@@ -139,16 +139,16 @@ bool resultsScreen(Ui& u, State& st) {
 
         float cx = row.x + 14;
         const float cy = row.y + 33;
-        if (r.curatedBest) chip(u, cx, cy, L"BEST", accent, gfx::rgb(0x2A0D18));
+        if (r.curatedBest) chip(u, cx, cy, L"BEST", accent, gfx::onAccent());
         if (!r.sourceId.empty()) {
-            chip(u, cx, cy, widen(r.sourceId), gfx::rgb(0x22222E), dim);
+            chip(u, cx, cy, widen(r.sourceId), cardHover, dim);
         }
         if (r.seeders > 0) {
             wchar_t s[24];
             swprintf(s, 24, L"%d seeders", r.seeders);
-            chip(u, cx, cy, s, gfx::rgb(0x1C2A1F), good);
+            chip(u, cx, cy, s, good.withAlpha(0.16f), good);
         }
-        if (r.size > 0) chip(u, cx, cy, sizeText(r.size), gfx::rgb(0x22222E), dim);
+        if (r.size > 0) chip(u, cx, cy, sizeText(r.size), cardHover, dim);
 
         if (clicked) {
             st.openMagnet = widen(r.magnet);
@@ -197,7 +197,7 @@ bool episodesScreen(Ui& u, State& st) {
     // ---- hero ---------------------------------------------------------
     if (!o.title.empty()) {
         const Rect hero{kPad, y, avail, 150};
-        u.c.fill(hero, gfx::rgb(0x12121A), kRadius);
+        u.c.fill(hero, card, kRadius);
         if (!o.banner.empty()) {
             if (ID2D1Bitmap* b = images::get(o.banner)) u.c.image(b, hero, kRadius, 0.42f);
         }
@@ -205,7 +205,7 @@ bool episodesScreen(Ui& u, State& st) {
 
         const Rect cover{hero.x + 14, hero.y + 14, 88, 122};
         if (!o.cover.empty()) {
-            u.c.fill(cover, gfx::rgb(0x0E0E14), 8);
+            u.c.fill(cover, panel, 8);
             if (ID2D1Bitmap* b = images::get(o.cover)) u.c.image(b, cover, 8);
         }
 
@@ -238,15 +238,15 @@ bool episodesScreen(Ui& u, State& st) {
 
     // ---- refusal ------------------------------------------------------
     if (o.refused) {
-        const Rect warn{kPad, y, avail, 52};
-        u.c.fill(warn, gfx::rgb(0x2A1A12), 10);
-        u.c.stroke(warn, gfx::rgb(0x6A4A22), 10);
+        const Rect box{kPad, y, avail, 52};
+        u.c.fill(box, warn.withAlpha(0.13f), 10);
+        u.c.stroke(box, warn.withAlpha(0.45f), 10);
         wchar_t msg[220];
         swprintf(msg, 220,
                  L"Episode %d is not clearly in this torrent, so nothing was played. "
                  L"Pick a file below instead.",
                  o.wanted);
-        u.c.text(msg, {warn.x + 14, warn.y + 16, warn.w - 28, 22}, gfx::rgb(0xE0B341), f(12.5f));
+        u.c.text(msg, {box.x + 14, box.y + 16, box.w - 28, 22}, warn, f(12.5f));
         y += 62;
     }
 
@@ -273,7 +273,7 @@ bool episodesScreen(Ui& u, State& st) {
         const std::string art =
             (meta != o.episodeInfo.end() && !meta->second.thumb.empty()) ? meta->second.thumb
                                                                         : o.cover;
-        u.c.fill(thumb, gfx::rgb(0x0E0E14), 7);
+        u.c.fill(thumb, panel, 7);
         if (!art.empty()) {
             if (ID2D1Bitmap* b = images::get(art)) u.c.image(b, thumb, 7);
         }
@@ -295,9 +295,9 @@ bool episodesScreen(Ui& u, State& st) {
                  f(11.5f));
 
         const Rect play{row.right() - 106, row.y + 21, 90, 30};
-        u.c.fill(play, h > 0.1f ? accent : gfx::rgb(0x22222E), 8);
+        u.c.fill(play, h > 0.1f ? accent : cardHover, 8);
         u.c.text(L"Play", {play.x, play.y + 7, play.w, 18},
-                 h > 0.1f ? gfx::rgb(0x2A0D18) : fg,
+                 h > 0.1f ? gfx::onAccent() : fg,
                  f(12.5f, gfx::Weight::Semibold, gfx::Align::Center));
 
         if (clicked) {
@@ -346,7 +346,7 @@ bool episodesScreen(Ui& u, State& st) {
         u.c.fill(veil, shade.withAlpha(0.62f));
 
         const Rect box{veil.cx() - 230, veil.cy() - 90, 460, 180};
-        u.c.fill(box, gfx::rgb(0x16161F), 14);
+        u.c.fill(box, card, 14);
         u.c.stroke(box, line, 14);
 
         u.c.text(L"Resume from " + formatTime(st.resumeSeconds) + L"?",
@@ -361,11 +361,11 @@ bool episodesScreen(Ui& u, State& st) {
         const bool goHot = u.clickable(3001, go);
         u.c.fill(go, accent, 9);
         u.c.text(L"Resume from " + formatTime(st.resumeSeconds), {go.x, go.y + 10, go.w, 20},
-                 gfx::rgb(0x2A0D18), f(12.5f, gfx::Weight::Semibold, gfx::Align::Center));
+                 gfx::onAccent(), f(12.5f, gfx::Weight::Semibold, gfx::Align::Center));
 
         const Rect over{go.right() + 12, box.y + 104, 200, 38};
         const bool overHot = u.clickable(3002, over);
-        u.c.fill(over, gfx::rgb(0x22222E), 9);
+        u.c.fill(over, cardHover, 9);
         u.c.stroke(over, line, 9);
         u.c.text(L"Start from the beginning", {over.x, over.y + 10, over.w, 20}, fg,
                  f(12.5f, gfx::Weight::Medium, gfx::Align::Center));

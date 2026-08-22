@@ -50,7 +50,7 @@ bool poster(Ui& u, State& st, int id, Rect tile, const ui::DiscoverItem& item,
     if (h > 0 && h < 1) wantMore = true;
     if (h > 0) tile = tile.offset(0, -3 * h);
 
-    u.c.fill(tile, gfx::rgb(0x12121A), 10);
+    u.c.fill(tile, card, 10);
     if (!item.cover.empty()) {
         if (ID2D1Bitmap* b = images::get(item.cover)) u.c.image(b, tile, 10);
     }
@@ -108,7 +108,7 @@ bool shelfScreen(Ui& u, State& st) {
 
     const Rect back{kPad, y, 150, 30};
     const bool backHot = u.clickable(5000, back);
-    u.c.fill(back, u.hover(5000) > 0.1f ? gfx::rgb(0x22222E) : gfx::rgb(0x16161F), 8);
+    u.c.fill(back, u.hover(5000) > 0.1f ? cardHover : card, 8);
     u.c.stroke(back, line, 8);
     u.c.text(L"< Back to Discover", {back.x, back.y + 6, back.w, 18}, dim,
              f(12, gfx::Weight::Medium, gfx::Align::Center));
@@ -145,7 +145,7 @@ bool shelfScreen(Ui& u, State& st) {
         const Rect more{u.c.bounds().cx() - 90, y, 180, 38};
         const bool hot = u.clickable(5001, more);
         u.c.fill(more, u.hover(5001) > 0.1f ? accentSoft : accent, 9);
-        u.c.text(L"Load more", {more.x, more.y + 10, more.w, 20}, gfx::rgb(0x2A0D18),
+        u.c.text(L"Load more", {more.x, more.y + 10, more.w, 20}, gfx::onAccent(),
                  f(13, gfx::Weight::Semibold, gfx::Align::Center));
         if (hot) {
             ++st.openShelfPage;
@@ -201,10 +201,10 @@ bool discoverScreen(Ui& u, State& st) {
             const float h = u.hover(5200 + static_cast<int>(i));
             if (h > 0 && h < 1) wantMore = true;
 
-            u.c.fill(chip, on ? accent : (h > 0.1f ? gfx::rgb(0x2A2A38) : gfx::rgb(0x1A1A24)), 15);
+            u.c.fill(chip, on ? accent : (h > 0.1f ? line : cardHover), 15);
             if (!on) u.c.stroke(chip, line, 15);
             u.c.text(label, {chip.x, chip.y + 6, chip.w, 18},
-                     on ? gfx::rgb(0x2A0D18) : (h > 0.1f ? fg : dim),
+                     on ? gfx::onAccent() : (h > 0.1f ? fg : dim),
                      f(12, on ? gfx::Weight::Semibold : gfx::Weight::Regular, gfx::Align::Center));
 
             if (clicked) {
@@ -241,7 +241,7 @@ bool discoverScreen(Ui& u, State& st) {
             const Rect again{u.c.bounds().cx() - 60, y + 66, 120, 34};
             const bool hot = u.clickable(5100, again);
             u.c.fill(again, u.hover(5100) > 0.1f ? accentSoft : accent, 8);
-            u.c.text(L"Try again", {again.x, again.y + 8, again.w, 18}, gfx::rgb(0x2A0D18),
+            u.c.text(L"Try again", {again.x, again.y + 8, again.w, 18}, gfx::onAccent(),
                      f(12.5f, gfx::Weight::Semibold, gfx::Align::Center));
             if (hot) {
                 st.discoverLoaded = false;

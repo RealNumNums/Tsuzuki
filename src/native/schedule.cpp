@@ -146,7 +146,7 @@ bool scheduleScreen(Ui& u, State& st) {
         for (const auto& [r, glyph, hot] :
              {std::tuple<Rect, const wchar_t*, bool>{prev, L"<", prevHot},
               std::tuple<Rect, const wchar_t*, bool>{next, L">", nextHot}}) {
-            u.c.fill(r, gfx::rgb(0x1A1A24), 8);
+            u.c.fill(r, cardHover, 8);
             u.c.stroke(r, line, 8);
             u.c.text(glyph, {r.x, r.y + 7, r.w, 18}, fg,
                      f(13, gfx::Weight::Bold, gfx::Align::Center));
@@ -178,10 +178,10 @@ bool scheduleScreen(Ui& u, State& st) {
             st.calMineOnly = !st.calMineOnly;
             return true;  // a different key, so the next frame fetches or reuses
         }
-        u.c.fill(pill, st.calMineOnly ? accent : gfx::rgb(0x1A1A24), 13);
+        u.c.fill(pill, st.calMineOnly ? accent : cardHover, 13);
         if (!st.calMineOnly) u.c.stroke(pill, line, 13);
         u.c.text(L"My list", {pill.x, pill.y + 5, pill.w, 18},
-                 st.calMineOnly ? gfx::rgb(0x2A0D18) : dim,
+                 st.calMineOnly ? gfx::onAccent() : dim,
                  f(12, gfx::Weight::Medium, gfx::Align::Center));
 
         if (stillFilling && st.calShownKey == key) {
@@ -237,7 +237,7 @@ bool scheduleScreen(Ui& u, State& st) {
         const int row = cell / 7;
         const Rect box{kPad + col * colW, y + row * cellH, colW, cellH};
 
-        u.c.stroke(box, gfx::rgb(0x1C1C26), 0);
+        u.c.stroke(box, cardHover, 0);
         if (day < 1 || day > total) continue;
 
         const bool isToday = thisMonth && day == today.tm_mday;
@@ -246,7 +246,7 @@ bool scheduleScreen(Ui& u, State& st) {
         }
         wchar_t num[8];
         swprintf(num, 8, L"%d", day);
-        u.c.text(num, {box.x + 6, box.y + 7, 22, 18}, isToday ? gfx::rgb(0x2A0D18) : dim,
+        u.c.text(num, {box.x + 6, box.y + 7, 22, 18}, isToday ? gfx::onAccent() : dim,
                  f(11.5f, gfx::Weight::Semibold, gfx::Align::Center));
 
         // What airs on this day.
@@ -262,9 +262,9 @@ bool scheduleScreen(Ui& u, State& st) {
             const bool clicked = u.clickable(id, strip);
             const float hv = u.hover(id);
             if (hv > 0 && hv < 1) wantMore = true;
-            if (hv > 0.1f) u.c.fill(strip, gfx::rgb(0x22222E), 4);
+            if (hv > 0.1f) u.c.fill(strip, cardHover, 4);
 
-            u.c.fill({strip.x + 2, strip.y + 6, 5, 5}, a.onMyList ? accent : gfx::rgb(0x4A4A5A),
+            u.c.fill({strip.x + 2, strip.y + 6, 5, 5}, a.onMyList ? accent : dim.withAlpha(0.7f),
                      2.5f);
 
             wchar_t time[16];

@@ -21,7 +21,7 @@ struct Settings {
     bool subsOn = true;
 
     // Interface
-    std::string theme = "tsuzuki";
+    std::string theme = "kuro";  // black and white, to match the mascot
     std::string titleLanguage = "romaji";   // romaji | english | native
 
     // Lookup

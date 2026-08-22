@@ -39,20 +39,20 @@ bool button(Ui& u, int id, const Rect& r, const std::wstring& label, bool primar
     if (primary) {
         u.c.fill(r, h > 0.1f ? accentSoft : accent, r.h / 2);
     } else if (quiet) {
-        u.c.fill(r, h > 0.1f ? gfx::rgb(0x2C2C3A) : gfx::rgb(0x1E1E28), 8);
+        u.c.fill(r, h > 0.1f ? line : cardHover, 8);
     } else {
-        u.c.fill(r, h > 0.1f ? gfx::rgb(0x2C2C3A) : gfx::rgb(0x20202B), 8);
-        u.c.stroke(r, h > 0.1f ? accent.withAlpha(0.5f) : gfx::rgb(0x30303E), 8);
+        u.c.fill(r, h > 0.1f ? line : cardHover, 8);
+        u.c.stroke(r, h > 0.1f ? accent.withAlpha(0.5f) : line, 8);
     }
     u.c.text(label, {r.x, r.y + (r.h - 17) / 2, r.w, 18},
-             primary ? gfx::rgb(0x2A0D18) : (quiet ? dim : fg),
+             primary ? gfx::onAccent() : (quiet ? dim : fg),
              f(12.5f, gfx::Weight::Semibold, gfx::Align::Center));
     return clicked;
 }
 
 // A slider that reports the fraction it was set to, or -1 when untouched.
 float slider(Ui& u, int id, const Rect& track, float value, Color fill) {
-    u.c.fill(track, gfx::rgb(0x2A2A38), track.h / 2);
+    u.c.fill(track, line, track.h / 2);
     u.c.fill({track.x, track.y, track.w * value, track.h}, fill, track.h / 2);
 
     const Rect hit{track.x - 4, track.y - 10, track.w + 8, track.h + 20};
@@ -61,7 +61,7 @@ float slider(Ui& u, int id, const Rect& track, float value, Color fill) {
 
     const float knob = over ? 6.5f : 5.0f;
     u.c.fill({track.x + track.w * value - knob, track.cy() - knob, knob * 2, knob * 2},
-             over ? gfx::rgb(0xFFFFFF) : fill, knob);
+             over ? fg : fill, knob);
 
     if (over && u.in.mouseDown) {
         return (std::max)(0.0f, (std::min)(1.0f, (u.in.mouseX - track.x) / track.w));
@@ -127,8 +127,8 @@ bool playerStrip(Ui& u, State& st) {
 
     // Panel. The window's region rounds the corners; this just fills it and
     // lifts the top edge a shade so it reads as a surface over the video.
-    u.c.fill(full, gfx::rgb(0x14141C));
-    u.c.fill({0, 0, w, 1}, gfx::rgb(0x2E2E3C));
+    u.c.fill(full, card);
+    u.c.fill({0, 0, w, 1}, line);
 
     const player::State ps = player::state();
     const ui::Status status = ui::status();
@@ -138,7 +138,7 @@ bool playerStrip(Ui& u, State& st) {
         u.c.text(widen(status.message), {pad, 20, w - pad * 2 - 110, 20}, fg,
                  f(13, gfx::Weight::Medium));
         const Rect bar{pad, 50, w - pad * 2 - 110, 5};
-        u.c.fill(bar, gfx::rgb(0x2A2A38), 2.5f);
+        u.c.fill(bar, line, 2.5f);
         u.c.fill({bar.x, bar.y, bar.w * (status.progress / 100.0f), bar.h}, accent, 2.5f);
         if (button(u, 4001, {w - pad - 90, 26, 90, 32}, L"Cancel")) ui::requestStop();
         return true;
@@ -168,7 +168,7 @@ bool playerStrip(Ui& u, State& st) {
     right -= 74 + 12;
 
     const Rect volTrack{right - 84, rowY + rowH / 2 - 2.5f, 84, 5};
-    const float vol = slider(u, 4040, volTrack, ps.volume / 100.0f, gfx::rgb(0x8A8A99));
+    const float vol = slider(u, 4040, volTrack, ps.volume / 100.0f, dim);
     if (vol >= 0) player::setVolume(static_cast<int>(vol * 100));
     right -= 84 + 16;
 

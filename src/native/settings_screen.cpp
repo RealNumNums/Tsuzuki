@@ -38,9 +38,9 @@ bool toggle(Ui& u, int id, const Rect& r, bool& value) {
     const bool clicked = u.clickable(id, pill);
     if (clicked) value = !value;
 
-    u.c.fill(pill, value ? accent : gfx::rgb(0x2A2A38), 12);
+    u.c.fill(pill, value ? accent : line, 12);
     const float knobX = value ? pill.right() - 21 : pill.x + 3;
-    u.c.fill({knobX, pill.y + 3, 18, 18}, value ? gfx::rgb(0x2A0D18) : gfx::rgb(0x8A8A99), 9);
+    u.c.fill({knobX, pill.y + 3, 18, 18}, value ? gfx::onAccent() : dim, 9);
     return clicked;
 }
 
@@ -48,7 +48,7 @@ bool toggle(Ui& u, int id, const Rect& r, bool& value) {
 int segmented(Ui& u, int id, const Rect& r, const wchar_t* const* labels, const int count,
               int current) {
     const float segW = r.w / count;
-    u.c.fill(r, gfx::rgb(0x16161F), 8);
+    u.c.fill(r, card, 8);
     u.c.stroke(r, line, 8);
 
     for (int i = 0; i < count; ++i) {
@@ -57,7 +57,7 @@ int segmented(Ui& u, int id, const Rect& r, const wchar_t* const* labels, const 
         if (u.clickable(id + i, seg)) current = i;
         if (on) u.c.fill(seg.inset(3), accent, 6);
         u.c.text(labels[i], {seg.x, seg.y + (seg.h - 17) / 2, seg.w, 18},
-                 on ? gfx::rgb(0x2A0D18) : dim,
+                 on ? gfx::onAccent() : dim,
                  f(12.5f, on ? gfx::Weight::Semibold : gfx::Weight::Regular, gfx::Align::Center));
     }
     return current;
@@ -71,7 +71,7 @@ void field(Ui& u, State& st, int id, const Rect& r, std::wstring& value,
     else if (u.in.mousePressed && !over && st.focusField == id) st.focusField = 0;
 
     const bool focused = st.focusField == id;
-    u.c.fill(r, gfx::rgb(0x16161F), 8);
+    u.c.fill(r, card, 8);
     u.c.stroke(r, focused ? accent : line, 8);
 
     const Rect inner{r.x + 11, r.y + (r.h - 19) / 2, r.w - 22, 19};
@@ -159,6 +159,61 @@ bool settingsScreen(Ui& u, State& st) {
     u.c.text(L"Settings", {kPad, y, 400, 30}, fg, f(21, gfx::Weight::Bold));
     y += 40;
 
+    // ---- Appearance ---------------------------------------------------
+    //
+    // Each swatch is painted in its own palette rather than described in
+    // words, because a colour scheme is the one setting you can just look at.
+    groupHeader(u, y, L"APPEARANCE");
+    {
+        const auto& list = gfx::palettes();
+        const float avail = w - kPad * 2;
+        constexpr float kSwatchW = 150, kSwatchH = 62, kSwGap = 10;
+        int cols = static_cast<int>((avail + kSwGap) / (kSwatchW + kSwGap));
+        if (cols < 1) cols = 1;
+
+        for (size_t i = 0; i < list.size(); ++i) {
+            const gfx::Palette& p = list[i];
+            const int col = static_cast<int>(i) % cols;
+            const int row = static_cast<int>(i) / cols;
+            const Rect box{kPad + col * (kSwatchW + kSwGap), y + row * (kSwatchH + kSwGap),
+                           kSwatchW, kSwatchH};
+
+            const int id = 7900 + static_cast<int>(i);
+            const bool clicked = u.clickable(id, box);
+            const float hv = u.hover(id);
+            if (hv > 0 && hv < 1) wantMore = true;
+            const bool on = s.theme == p.key;
+
+            // Painted in the palette it is offering, so the swatch is a
+            // preview rather than a label.
+            u.c.fill(box, p.bg, 9);
+            u.c.stroke(box, on ? p.accent : (hv > 0.1f ? p.line : line), 9, on ? 2.0f : 1.0f);
+
+            u.c.text(p.name, {box.x + 12, box.y + 10, box.w - 24, 18}, p.fg,
+                     f(12.5f, gfx::Weight::Semibold));
+
+            // The three tones that carry the look.
+            const float dotY = box.y + 34;
+            u.c.fill({box.x + 12, dotY, 18, 16}, p.accent, 4);
+            u.c.fill({box.x + 34, dotY, 18, 16}, p.card, 4);
+            u.c.stroke({box.x + 34, dotY, 18, 16}, p.line, 4);
+            u.c.fill({box.x + 56, dotY, 18, 16}, p.fg, 4);
+
+            if (on) {
+                u.c.text(L"✓", {box.right() - 30, box.y + 32, 20, 20}, p.accent,
+                         f(14, gfx::Weight::Bold, gfx::Align::Center));
+            }
+            if (clicked && !on) {
+                s.theme = p.key;
+                // Applied immediately: waiting for the debounced save would
+                // mean clicking a colour and watching nothing happen.
+                gfx::useTheme(p.key);
+            }
+        }
+        const int rows = (static_cast<int>(list.size()) + cols - 1) / cols;
+        y += rows * (kSwatchH + kSwGap) + 14;
+    }
+
     // ---- Accounts -----------------------------------------------------
     groupHeader(u, y, L"ACCOUNTS");
     {
@@ -177,12 +232,12 @@ bool settingsScreen(Ui& u, State& st) {
 
             const bool canPress = t.linked || t.configured;
             const bool clicked = canPress && u.clickable(id, btn);
-            u.c.fill(btn, !canPress ? gfx::rgb(0x1A1A24)
-                        : t.linked  ? gfx::rgb(0x22222E)
+            u.c.fill(btn, !canPress ? cardHover
+                        : t.linked  ? cardHover
                                     : accent,
                      8);
             u.c.text(t.linked ? L"Unlink" : L"Link", {btn.x, btn.y + 8, btn.w, 18},
-                     !canPress ? dim : (t.linked ? fg : gfx::rgb(0x2A0D18)),
+                     !canPress ? dim : (t.linked ? fg : gfx::onAccent()),
                      f(12.5f, gfx::Weight::Semibold, gfx::Align::Center));
 
             if (clicked) {
@@ -224,7 +279,7 @@ bool settingsScreen(Ui& u, State& st) {
 
             // ---- the two flows that need more than a button -----------
             if (st.linking == t.id && t.authKind == 1 && !st.deviceCode.empty()) {
-                u.c.fill({kPad, y, w - kPad * 2, 62}, gfx::rgb(0x16161F), 10);
+                u.c.fill({kPad, y, w - kPad * 2, 62}, card, 10);
                 u.c.stroke({kPad, y, w - kPad * 2, 62}, accent.withAlpha(0.5f), 10);
                 u.c.text(L"Enter this code at " + st.deviceUrl,
                          {kPad + 16, y + 10, w - kPad * 2 - 32, 18}, dim, f(11.5f));
@@ -249,7 +304,7 @@ bool settingsScreen(Ui& u, State& st) {
             }
 
             if (st.linking == t.id && t.authKind == 2) {
-                u.c.fill({kPad, y, w - kPad * 2, 108}, gfx::rgb(0x16161F), 10);
+                u.c.fill({kPad, y, w - kPad * 2, 108}, card, 10);
                 u.c.stroke({kPad, y, w - kPad * 2, 108}, line, 10);
                 u.c.text(widen(t.hint), {kPad + 16, y + 10, w - kPad * 2 - 32, 18}, dim,
                          f(11.5f));
@@ -274,7 +329,7 @@ bool settingsScreen(Ui& u, State& st) {
                     st.kitsuPassword.clear();
                 }
                 u.c.fill(go, accent, 8);
-                u.c.text(L"Sign in", {go.x, go.y + 7, go.w, 18}, gfx::rgb(0x2A0D18),
+                u.c.text(L"Sign in", {go.x, go.y + 7, go.w, 18}, gfx::onAccent(),
                          f(12.5f, gfx::Weight::Semibold, gfx::Align::Center));
                 y += 118;
             }
@@ -413,7 +468,7 @@ bool settingsScreen(Ui& u, State& st) {
         // is the whole reason this was broken and nobody could tell.
         const ui::Status st2 = ui::status();
         const bool live = st2.discordConnected;
-        u.c.fill({kPad, y + 4, 7, 7}, live ? good : gfx::rgb(0x5A5A68), 3.5f);
+        u.c.fill({kPad, y + 4, 7, 7}, live ? good : dim.withAlpha(0.7f), 3.5f);
         u.c.text(live ? L"Connected to Discord"
                       : L"Not connected - is Discord running?",
                  {kPad + 14, y - 4, w - kPad * 2, 18}, dim, f(11.5f));
