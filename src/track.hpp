@@ -88,7 +88,12 @@ struct ListEntry {
 };
 
 // The user's lists, newest activity first. Empty when not linked.
-std::vector<ListEntry> lists();
+//
+// `ok` distinguishes the two ways of getting nothing back: a request that
+// failed, and a list that is genuinely empty. They are not the same thing,
+// and treating an empty list as a failure means anyone who has not added
+// anything yet sees a permanent sync error.
+std::vector<ListEntry> lists(bool* ok = nullptr);
 
 void load();  // read the stored token at startup
 

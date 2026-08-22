@@ -613,8 +613,19 @@ void workerLoop() {
                 g_pullRequested = false;
                 lastPull = now;
                 g_syncing = true;
-                const auto entries = track::lists();
-                if (!entries.empty()) {
+                bool ok = false;
+                const auto entries = track::lists(&ok);
+                if (ok) {
+                    // Cleared before the merge, not after: mergePull is what
+                    // writes the file, so clearing afterwards left the old
+                    // message on disk until something else happened to save.
+                    {
+                        std::lock_guard<std::mutex> lock(g_mutex);
+                        g_lastError.clear();
+                    }
+                    // Including when it came back empty: that is a real answer
+                    // about an account with nothing on its list yet, not a
+                    // failure to reach AniList.
                     mergePull(entries);
                 } else {
                     std::lock_guard<std::mutex> lock(g_mutex);

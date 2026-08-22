@@ -323,8 +323,9 @@ bool updateProgress(int mediaId, int progress) {
     return updateEntry(mediaId, progress, "CURRENT");
 }
 
-std::vector<ListEntry> lists() {
+std::vector<ListEntry> lists(bool* ok) {
     std::vector<ListEntry> out;
+    if (ok) *ok = false;
     const Account a = account();
     if (!a.linked) return out;
 
@@ -343,6 +344,14 @@ std::vector<ListEntry> lists() {
         "  }"
         "}",
         vars, token());
+
+    // A well-formed answer means the request worked, whether or not there is
+    // anything in it - an account with no anime added is a valid answer.
+    if (ok && j.contains("data") && j["data"].is_object() &&
+        j["data"].contains("MediaListCollection") &&
+        j["data"]["MediaListCollection"].is_object()) {
+        *ok = true;
+    }
 
     // Defensive throughout: AniList answers errors with a completely different
     // shape, and indexing a const json at a missing key throws.
