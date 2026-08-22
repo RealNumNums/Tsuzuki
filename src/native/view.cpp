@@ -552,20 +552,35 @@ void railTooltip(Ui& u, const RailTip& tip) {
 // ---------------------------------------------------------------- header
 
 // Returns true if a search was submitted.
-bool header(Ui& u, State& st) {
+//
+// `solid` fades the bar in. At zero it is not there at all and the artwork
+// behind it runs to the top of the window, which is the whole point - a strip
+// of opaque chrome above the picture makes the picture look like a panel
+// dropped into a toolbar rather than like the page it is sitting on. It fades
+// to opaque as the page scrolls, so text passing underneath stays readable.
+bool header(Ui& u, State& st, float solid) {
     const float w = u.c.bounds().w;
     bool submit = false;
 
-    u.c.fill({0, 0, w, kHeaderH}, panel);
-    u.c.fill({0, kHeaderH - 1, w, 1}, line);
+    if (solid > 0.01f) {
+        u.c.fill({0, 0, w, kHeaderH}, panel.withAlpha(solid));
+        u.c.fill({0, kHeaderH - 1, w, 1}, line.withAlpha(solid));
+    }
+    if (solid < 0.99f) {
+        // Something for the controls to sit on while the bar itself is clear.
+        u.c.gradient({0, 0, w, kHeaderH + 26}, shade.withAlpha(0.5f * (1 - solid)),
+                     shade.withAlpha(0.0f));
+    }
 
     // Search field. It has the header to itself now that the destinations
     // moved to the rail.
     const Rect box{kPad, 14, w - kPad * 2 - 180, 34};
     const bool overBox = box.contains(u.mouseX(), u.mouseY());
     if (u.in.mousePressed) st.queryFocused = overBox;
-    u.c.fill(box, card, 9);
-    u.c.stroke(box, st.queryFocused ? accent : line, 9);
+    // Over artwork the solid card colour looks pasted on; a smoked panel reads
+    // as part of the picture.
+    u.c.fill(box, solid > 0.5f ? card : shade.withAlpha(0.42f), 9);
+    u.c.stroke(box, st.queryFocused ? accent : line.withAlpha(0.4f + 0.6f * solid), 9);
 
     const Rect textArea = {box.x + 12, box.y + 8, box.w - 24, 20};
     if (st.query.empty() && !st.queryFocused) {
@@ -580,8 +595,8 @@ bool header(Ui& u, State& st) {
 
     // Episode box
     const Rect epBox{box.right() + 10, 14, 68, 34};
-    u.c.fill(epBox, card, 9);
-    u.c.stroke(epBox, line, 9);
+    u.c.fill(epBox, solid > 0.5f ? card : shade.withAlpha(0.42f), 9);
+    u.c.stroke(epBox, line.withAlpha(0.4f + 0.6f * solid), 9);
     u.c.text(st.episodeWanted.empty() ? L"Ep #" : st.episodeWanted,
              {epBox.x + 10, epBox.y + 8, epBox.w - 16, 20},
              st.episodeWanted.empty() ? dim : fg, f(13.5f));
@@ -705,8 +720,10 @@ bool home(Ui& u, State& st) {
         st.hero.magnet = heroMagnet;
     }
 
-    const float heroH = heroBanner(u, st, kHeaderH - st.scroll[0], wantMore);
-    float y = kHeaderH + (heroH > 0 ? heroH + 4 : 40) - st.scroll[0];
+    // From the very top of the pane, not from under the header - the header
+    // draws over it, fading in as this scrolls away.
+    const float heroH = heroBanner(u, st, -st.scroll[0], wantMore);
+    float y = (heroH > 0 ? heroH + 22 : kHeaderH + 40) - st.scroll[0];
 
     if (heroH == 0) {
         u.c.text(L"Downloads are deleted after you finish watching.",
@@ -968,7 +985,10 @@ bool frame(Ui& u, State& st) {
     // the top. Without the clip, a scrolled page drew its rows straight
     // through the header and the two overlapped.
     const Rect full = u.c.bounds();
-    u.c.pushClip({0, kHeaderH, full.w, full.h - kHeaderH});
+    // Clipped to the whole pane rather than to below the header: the banner
+    // has to be able to reach the top of the window. Clicks are still kept out
+    // of the header's band by hitTop.
+    u.c.pushClip({0, 0, full.w, full.h});
     u.hitTop = kHeaderH;
 
     switch (st.screen) {
@@ -985,7 +1005,14 @@ bool frame(Ui& u, State& st) {
     u.c.popClip();
     u.hitTop = 0;
 
-    if (header(u, st) && !st.query.empty()) {
+    // Transparent over the banner, opaque once the page has scrolled past it
+    // or when there is no banner to be transparent over.
+    float headerSolid = 1.0f;
+    if (st.screen == Screen::Home && st.hero.id != 0 && st.hero.id == st.heroWant) {
+        headerSolid = (std::min)(1.0f, (std::max)(0.0f, st.scroll[0] / 130.0f));
+    }
+
+    if (header(u, st, headerSolid) && !st.query.empty()) {
         // A magnet link pasted into the search box skips straight to the
         // file list - there is nothing to look up.
         const std::wstring q = st.query;
