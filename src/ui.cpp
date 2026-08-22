@@ -144,6 +144,7 @@ json settingsToJson(const Settings& s) {
                 {"deleteAfter", s.deleteAfter},
                 {"subsOn", s.subsOn},
                 {"theme", s.theme},
+                {"mascot", s.mascot},
                 {"titleLanguage", s.titleLanguage},
                 {"lookupPreference", s.lookupPreference},
                 {"autoSelect", s.autoSelect},
@@ -177,6 +178,7 @@ void settingsFromJson(const json& j, Settings& s) {
     if (j.contains("deleteAfter") && j["deleteAfter"].is_boolean()) s.deleteAfter = j["deleteAfter"];
     if (j.contains("subsOn") && j["subsOn"].is_boolean()) s.subsOn = j["subsOn"];
     if (j.contains("theme") && j["theme"].is_string()) s.theme = j["theme"];
+    if (j.contains("mascot") && j["mascot"].is_boolean()) s.mascot = j["mascot"];
     if (j.contains("titleLanguage") && j["titleLanguage"].is_string()) s.titleLanguage = j["titleLanguage"];
     if (j.contains("lookupPreference") && j["lookupPreference"].is_string()) s.lookupPreference = j["lookupPreference"];
     if (j.contains("autoSelect") && j["autoSelect"].is_boolean()) s.autoSelect = j["autoSelect"];

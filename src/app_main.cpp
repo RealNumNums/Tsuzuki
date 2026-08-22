@@ -31,6 +31,7 @@
 #include "library.hpp"
 #include "native/async.hpp"
 #include "native/images.hpp"
+#include "native/mascot.hpp"
 #include "native/view.hpp"
 #include "ui.hpp"
 
@@ -298,6 +299,17 @@ void render(HWND hwnd) {
     g_state.contentH[idx] = g_ui.contentHeight;
 
     g_canvas.end();
+
+    // The rail toggles her; all that is left to do here is remember it.
+    {
+        static bool acted = g_state.mascotOn;
+        if (g_state.mascotOn != acted) {
+            acted = g_state.mascotOn;
+            Settings cfg = ui::settings();
+            cfg.mascot = g_state.mascotOn;
+            ui::applySettings(cfg);
+        }
+    }
 
     // Input is edge-triggered: consumed once the frame that saw it is done.
     g_input.mousePressed = false;
@@ -733,6 +745,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int showCmd) {
     // The theme before the first frame, so nothing paints in the wrong
     // palette and then corrects itself.
     tsuzuki::gfx::useTheme(tsuzuki::ui::settings().theme);
+    g_state.mascotOn = tsuzuki::ui::settings().mascot;
 
     if (!tsuzuki::gfx::init()) {
         fatal(nullptr, L"Could not start Direct2D. A graphics driver update may be needed.");

@@ -1,12 +1,12 @@
 <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tsuzuki logo">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#453A7A"/>
-      <stop offset="1" stop-color="#1B1B2F"/>
+      <stop offset="0" stop-color="#232326"/>
+      <stop offset="1" stop-color="#08080A"/>
     </linearGradient>
     <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#FF8FB3"/>
-      <stop offset="1" stop-color="#FF5C8D"/>
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#CFCFD6"/>
     </linearGradient>
   </defs>
 
@@ -14,10 +14,10 @@
 
   <!-- play triangle + trailing ellipsis: "to be continued..." -->
   <path d="M28 38 L28 90 L68 64 Z" fill="url(#accent)" stroke-linejoin="round"/>
-  <circle cx="82" cy="64" r="5.5" fill="#5BE9E9"/>
-  <circle cx="96" cy="64" r="5.5" fill="#5BE9E9" opacity=".72"/>
-  <circle cx="110" cy="64" r="5.5" fill="#5BE9E9" opacity=".45"/>
+  <circle cx="82" cy="64" r="5.5" fill="#E8E8EC"/>
+  <circle cx="96" cy="64" r="5.5" fill="#E8E8EC" opacity=".62"/>
+  <circle cx="110" cy="64" r="5.5" fill="#E8E8EC" opacity=".34"/>
 
   <!-- sparkle -->
-  <path d="M100 26 L102.6 33.4 L110 36 L102.6 38.6 L100 46 L97.4 38.6 L90 36 L97.4 33.4 Z" fill="#FFF3B0" opacity=".9"/>
+  <path d="M100 26 L102.6 33.4 L110 36 L102.6 38.6 L100 46 L97.4 38.6 L90 36 L97.4 33.4 Z" fill="#FFFFFF" opacity=".92"/>
 </svg>

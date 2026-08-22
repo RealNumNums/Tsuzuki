@@ -39,6 +39,7 @@ add_library(tsuzuki_core STATIC
   src/tracks.cpp
   src/native/gfx.cpp
   src/native/themes.cpp
+  src/native/mascot.cpp
   src/native/images.cpp
   src/native/view.cpp
   src/native/settings_screen.cpp

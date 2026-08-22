@@ -80,9 +80,6 @@ struct Palette {
     const wchar_t* name;
     Color bg, panel, card, cardHover, line, fg, dim, accent, accentSoft, good, warn, bad,
         shade;
-    // Whether text on this background is dark - a light theme needs the
-    // opposite ink on its accent-filled buttons.
-    bool light = false;
 };
 
 // Everything the selector offers, the shipped default first.
@@ -120,6 +117,7 @@ inline constexpr wchar_t home[] = L"";
 inline constexpr wchar_t compass[] = L"";
 inline constexpr wchar_t calendar[] = L"";
 inline constexpr wchar_t settings[] = L"";
+inline constexpr wchar_t mascot[] = L"";
 }  // namespace icons
 
 // Device-independent startup. Call once.

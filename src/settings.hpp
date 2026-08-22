@@ -22,6 +22,7 @@ struct Settings {
 
     // Interface
     std::string theme = "kuro";  // black and white, to match the mascot
+    bool mascot = false;      // the companion window, pinned beside the app
     std::string titleLanguage = "romaji";   // romaji | english | native
 
     // Lookup

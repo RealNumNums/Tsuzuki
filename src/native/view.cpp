@@ -5,6 +5,7 @@
 #include "../ui.hpp"
 #include "async.hpp"
 #include "images.hpp"
+#include "mascot.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -398,6 +399,31 @@ bool navRail(Ui& u, State& st, RailTip& tip) {
     Font glyphFont = f(17, gfx::Weight::Regular, gfx::Align::Center);
     glyphFont.icon = true;
 
+    // The mascot is a toggle rather than a destination, so it sits apart from
+    // the four, just above Settings.
+    {
+        const Rect pill{(kRailW - 42) / 2, h - 112, 42, 40};
+        const bool hot = u.clickable(9120, pill);
+        const float hv = u.hover(9120);
+        if (hv > 0 && hv < 1) wantMore = true;
+
+        if (st.mascotOn) {
+            u.c.fill(pill, accent, 11);
+        } else if (hv > 0.05f) {
+            u.c.fill(pill, cardHover.withAlpha(hv), 11);
+        }
+        Font g = f(17, gfx::Weight::Regular, gfx::Align::Center);
+        g.icon = true;
+        u.c.text(gfx::icons::mascot, {pill.x, pill.y + 11, pill.w, 22},
+                 st.mascotOn ? gfx::onAccent() : (hv > 0.1f ? fg : dim), g);
+
+        if (hv > 0.6f && !st.mascotOn) {
+            tip.label = L"Mascot";
+            tip.y = pill.y + 9;
+        }
+        if (hot) st.mascotOn = !st.mascotOn;
+    }
+
     for (int i = 0; i < 4; ++i) {
         // Settings sits at the foot of the rail: it is the one destination you
         // are not moving between, so it should not be in the flow of the rest.
@@ -435,6 +461,33 @@ bool navRail(Ui& u, State& st, RailTip& tip) {
     }
 
     return wantMore;
+}
+
+// The mascot, in the bottom-right corner.
+//
+// She is cut out of her background, so there is no panel and no frame - just
+// the character over whatever the app is already painting. Painted last and
+// deliberately not clickable: a big rectangle of mostly-transparent pixels
+// swallowing clicks meant for the content underneath would be worse than
+// having no way to dismiss her here, and the rail button is right there.
+void drawMascot(Ui& u, const State& st) {
+    if (!st.mascotOn) return;
+    ID2D1Bitmap* art = mascot::art(u.c);
+    if (!art) return;
+
+    const Rect win = u.c.bounds();
+    const D2D1_SIZE_F size = art->GetSize();
+    if (size.width <= 0 || size.height <= 0) return;
+
+    // Big enough to read as a character, small enough to stay a companion.
+    float h = std::min(300.0f, win.h * 0.40f);
+    float w = h * size.width / size.height;
+    if (w > win.w * 0.42f) {
+        w = win.w * 0.42f;
+        h = w * size.height / size.width;
+    }
+
+    u.c.image(art, {win.w - w - 6, win.h - h, w, h});
 }
 
 // Painted after everything else, so nothing can cover it.
@@ -885,6 +938,7 @@ bool frame(Ui& u, State& st) {
     }
 
     u.popOrigin();
+    drawMascot(u, st);
     railTooltip(u, tip);
     u.endFrame();
     return wantMore || u.wantsAnimation();

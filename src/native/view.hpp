@@ -91,6 +91,10 @@ enum class Screen { Home, Results, Episodes, Settings, Player, Discover, Shelf, 
 // Everything the interface needs that is not in the engine already.
 struct State {
     Screen screen = Screen::Home;
+
+    // The companion window. The view only flips this; the window itself is
+    // the application's business, since it is the one holding the HWND.
+    bool mascotOn = false;
     std::wstring query;
     std::wstring episodeWanted;
     bool queryFocused = false;

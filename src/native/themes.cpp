@@ -30,7 +30,7 @@ const std::vector<Palette> kPalettes = {
 
     {"whiteout", L"Whiteout", rgb(0xF4F4F7), rgb(0xFFFFFF), rgb(0xFFFFFF), rgb(0xECECF2), rgb(0xD6D6E0),
      rgb(0x1B1B22), rgb(0x6A6A78), rgb(0x2B2B33), rgb(0x51515E), rgb(0x2E9E5B), rgb(0xA9781C),
-     rgb(0xC24545), rgb(0x1B1B22), true},
+     rgb(0xC24545), rgb(0x1B1B22)},
 
     {"catppuccin", L"Catppuccin", rgb(0x1E1E2E), rgb(0x181825), rgb(0x242438), rgb(0x2D2D44), rgb(0x3B3B55),
      rgb(0xCDD6F4), rgb(0x9399B2), rgb(0xF5C2E7), rgb(0xFAD6EF), rgb(0xA6E3A1), rgb(0xF9E2AF),
