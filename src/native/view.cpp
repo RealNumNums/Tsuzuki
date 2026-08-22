@@ -183,7 +183,7 @@ bool header(Ui& u, State& st) {
     u.c.text(L"続き", {kPad + 78, 24, 60, 20}, accent.withAlpha(0.85f), f(13));
 
     // Search field
-    const Rect box{kPad + 150, 14, w - kPad * 2 - 150 - 400, 34};
+    const Rect box{kPad + 150, 14, w - kPad * 2 - 150 - 490, 34};
     const bool overBox = box.contains(u.in.mouseX, u.in.mouseY);
     if (u.in.mousePressed) st.queryFocused = overBox;
     u.c.fill(box, gfx::rgb(0x16161F), 9);
@@ -219,9 +219,11 @@ bool header(Ui& u, State& st) {
     // Navigation. Two destinations for now, and the current one is marked
     // so the window never leaves you guessing where you are.
     struct NavItem { const wchar_t* label; Screen screen; float width; };
-    const NavItem nav[] = {{L"Home", Screen::Home, 62}, {L"Settings", Screen::Settings, 84}};
+    const NavItem nav[] = {{L"Home", Screen::Home, 62},
+                           {L"Discover", Screen::Discover, 82},
+                           {L"Settings", Screen::Settings, 84}};
     float navX = go.right() + 16;
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < 3; ++i) {
         const Rect item{navX, 14, nav[i].width, 34};
         const bool on = st.screen == nav[i].screen;
         const bool over = u.clickable(9010 + i, item);
@@ -297,10 +299,21 @@ bool home(Ui& u, State& st) {
     const auto hist = ui::history();
 
     if (cont.empty() && lists.empty() && hist.empty()) {
-        u.c.text(L"Search for something to watch.", {kPad, kHeaderH + 90, avail, 24}, dim,
-                 f(15, gfx::Weight::Regular, gfx::Align::Center));
+        u.c.text(L"Nothing here yet.", {kPad, kHeaderH + 80, avail, 26}, fg,
+                 f(16, gfx::Weight::Semibold, gfx::Align::Center));
+        u.c.text(L"Search for something, or see what is trending.",
+                 {kPad, kHeaderH + 108, avail, 22}, dim,
+                 f(13, gfx::Weight::Regular, gfx::Align::Center));
+
+        const Rect go{u.c.bounds().cx() - 80, kHeaderH + 146, 160, 38};
+        const bool hot = u.clickable(140, go);
+        u.c.fill(go, u.hover(140) > 0.1f ? accentSoft : accent, 9);
+        u.c.text(L"Discover", {go.x, go.y + 10, go.w, 20}, gfx::rgb(0x2A0D18),
+                 f(13, gfx::Weight::Semibold, gfx::Align::Center));
+        if (hot) st.screen = Screen::Discover;
+
         u.contentHeight = 0;
-        return false;
+        return u.wantsAnimation();
     }
 
     // ---- Continue watching -------------------------------------------
@@ -537,6 +550,7 @@ bool frame(Ui& u, State& st) {
         case Screen::Settings: wantMore = settingsScreen(u, st); break;
         case Screen::Results: wantMore = resultsScreen(u, st); break;
         case Screen::Episodes: wantMore = episodesScreen(u, st); break;
+        case Screen::Discover: wantMore = discoverScreen(u, st); break;
         default: break;
     }
 

@@ -10,6 +10,7 @@
 #include "../ui.hpp"
 
 #include <string>
+#include <vector>
 
 namespace tsuzuki::async {
 
@@ -28,6 +29,10 @@ bool takeSearch(ui::SearchOutcome& out);
 void open(const std::string& magnet, int episode, int anilistId);
 bool openRunning();
 bool takeOpen(ui::OpenOutcome& out);
+
+void discover(const std::string& genre);
+bool discoverRunning();
+bool takeDiscover(ui::Discovery& out);
 
 void shutdown();
 

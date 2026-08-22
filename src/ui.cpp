@@ -1122,6 +1122,35 @@ SearchOutcome search(const std::string& q, int resolution) {
     return out;
 }
 
+
+std::vector<std::string> genreList() { return anilist::genres(); }
+
+Discovery discover(const std::string& genre) {
+    const Settings cfg = currentSettings();
+    Discovery out;
+
+    std::string error;
+    for (const auto& s : anilist::discoverShelves(genre, cfg.showAdult, &error)) {
+        Shelf shelf;
+        shelf.title = genre.empty() || s.title != "Highest rated" ? s.title
+                                                                 : "Best " + genre;
+        for (const auto& b : s.items) {
+            DiscoverItem d;
+            d.id = b.id;
+            d.episodes = b.episodes;
+            d.year = b.year;
+            d.score = b.score;
+            d.title = b.title;
+            d.cover = b.cover;
+            d.format = b.format;
+            shelf.items.push_back(std::move(d));
+        }
+        out.shelves.push_back(std::move(shelf));
+    }
+    out.error = error;
+    return out;
+}
+
 OpenOutcome open(const std::string& magnet, int episode, int anilistId) {
     OpenOutcome out;
     Engine& e = engine();

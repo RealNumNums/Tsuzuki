@@ -72,7 +72,7 @@ class Ui {
 };
 
 // Which screen is showing. The window owns this; screens ask to change it.
-enum class Screen { Home, Results, Episodes, Settings, Player, Message };
+enum class Screen { Home, Results, Episodes, Settings, Player, Discover };
 
 // Everything the interface needs that is not in the engine already.
 struct State {
@@ -118,6 +118,12 @@ struct State {
     ui::OpenOutcome opened;
     bool openDone = false;
 
+    // Discover: shelves of trending and popular titles, and which genre
+    // they are narrowed to. Empty genre means all.
+    ui::Discovery discovery;
+    bool discoverLoaded = false;
+    std::wstring genre;
+
     // Where to go back to once playback ends. Playback takes over the whole
     // window, so the screen behind it has to be remembered.
 Screen beforePlayer = Screen::Home;
@@ -133,6 +139,9 @@ bool settingsScreen(Ui&, State&);
 // Defined in browse_screens.cpp.
 bool resultsScreen(Ui&, State&);
 bool episodesScreen(Ui&, State&);
+
+// Defined in discover.cpp.
+bool discoverScreen(Ui&, State&);
 
 // Defined in waiting.cpp - the panel shown while an episode gets ready.
 bool waitingPanel(Ui&, State&, const std::wstring& heading);

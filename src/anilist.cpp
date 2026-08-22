@@ -221,6 +221,135 @@ int intOr(const json& v, int fallback) {
 
 }  // namespace
 
+namespace {
+
+// Shared by the shelf query and browse().
+BrowseItem parseBrowseItem(const json& m) {
+    BrowseItem b;
+    b.id = intOr(m.contains("id") ? m["id"] : json(), 0);
+    if (!b.id) return b;
+    b.episodes = intOr(m.contains("episodes") ? m["episodes"] : json(), 0);
+    b.year = intOr(m.contains("seasonYear") ? m["seasonYear"] : json(), 0);
+    b.score = intOr(m.contains("averageScore") ? m["averageScore"] : json(), 0);
+    b.format = pick(m, "format");
+    b.status = pick(m, "status");
+
+    const json t = m.value("title", json::object());
+    b.title = pick(t, "romaji");
+    if (b.title.empty()) b.title = pick(t, "english");
+
+    const json cover = m.value("coverImage", json::object());
+    b.cover = pick(cover, "large");
+    b.color = pick(cover, "color");
+    return b;
+}
+
+}  // namespace
+
+std::vector<DiscoverShelf> discoverShelves(const std::string& genre, bool allowAdult,
+                                           std::string* error) {
+    std::vector<DiscoverShelf> out;
+    if (error) error->clear();
+
+    // Current season, so "this season" means what it says.
+    int year = 0;
+    std::string season;
+    {
+        const std::time_t now = std::time(nullptr);
+        std::tm tm{};
+#ifdef _WIN32
+        localtime_s(&tm, &now);
+#else
+        localtime_r(&now, &tm);
+#endif
+        year = tm.tm_year + 1900;
+        const int month = tm.tm_mon + 1;
+        season = month <= 3 ? "WINTER" : month <= 6 ? "SPRING" : month <= 9 ? "SUMMER" : "FALL";
+    }
+
+    const std::string genreArg = genre.empty() ? "" : ", genre: $genre";
+    const std::string adultArg = allowAdult ? "" : ", isAdult: false";
+    const std::string decls = genre.empty() ? "" : "($genre: String)";
+
+    const std::string fields =
+        "      id episodes format status seasonYear averageScore genres"
+        "      title { romaji english }"
+        "      coverImage { large color }";
+
+    const auto shelf = [&](const char* alias, const std::string& extra) {
+        return std::string("  ") + alias + ": Page(page: 1, perPage: 24) {" +
+               "    media(type: ANIME" + extra + genreArg + adultArg + ") {" + fields +
+               "    }" + "  }";
+    };
+
+    const std::string gql =
+        "query " + decls + " {" +
+        shelf("trending", ", sort: TRENDING_DESC") +
+        shelf("season", ", sort: POPULARITY_DESC, season: " + season + ", seasonYear: " +
+                            std::to_string(year)) +
+        shelf("rated", ", sort: SCORE_DESC") +
+        shelf("popular", ", sort: POPULARITY_DESC") +
+        "}";
+
+    json body;
+    body["query"] = gql;
+    if (!genre.empty()) body["variables"] = json{{"genre", genre}};
+
+    const auto res = http::postJson(kEndpoint, body.dump());
+    if (!res.ok) {
+        if (error) {
+            *error = res.status == 429
+                         ? "AniList is rate limiting us - give it a minute."
+                         : "Could not reach AniList.";
+        }
+        return out;
+    }
+
+    json j;
+    try {
+        j = json::parse(res.body);
+    } catch (const std::exception&) {
+        if (error) *error = "AniList sent something unreadable.";
+        return out;
+    }
+
+    // A 429 comes back as a normal body with an errors array, not as a
+    // transport failure, so it has to be looked for here too.
+    if (j.contains("errors") && j["errors"].is_array() && !j["errors"].empty()) {
+        const json& first = j["errors"][0];
+        const std::string msg = first.value("message", "AniList refused the request.");
+        if (error) {
+            *error = msg == "Too Many Requests."
+                         ? "AniList is rate limiting us - give it a minute."
+                         : msg;
+        }
+        return out;
+    }
+
+    if (!j.contains("data") || !j["data"].is_object()) return out;
+    const json& data = j["data"];
+
+    const std::pair<const char*, const char*> shelves[] = {
+        {"trending", "Trending now"},
+        {"season", "This season"},
+        {"rated", "Highest rated"},
+        {"popular", "Most popular of all time"},
+    };
+
+    for (const auto& [alias, label] : shelves) {
+        if (!data.contains(alias) || !data[alias].is_object()) continue;
+        DiscoverShelf s;
+        s.title = label;
+        for (const auto& m : data[alias].value("media", json::array())) {
+            if (!m.is_object()) continue;
+            BrowseItem b = parseBrowseItem(m);
+            if (b.id) s.items.push_back(std::move(b));
+        }
+        if (!s.items.empty()) out.push_back(std::move(s));
+    }
+    return out;
+}
+
 std::vector<BrowseItem> browse(const BrowseFilters& f) {
     std::vector<BrowseItem> out;
 

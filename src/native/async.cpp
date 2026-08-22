@@ -3,6 +3,7 @@
 #include <atomic>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 namespace tsuzuki::async {
 namespace {
@@ -24,6 +25,9 @@ ui::SearchOutcome g_searchResult;
 
 Slot g_openSlot;
 ui::OpenOutcome g_openResult;
+
+Slot g_discoverSlot;
+ui::Discovery g_discoverResult;
 
 std::atomic<bool> g_alive{true};
 
@@ -100,6 +104,41 @@ bool takeOpen(ui::OpenOutcome& out) {
     if (!g_openSlot.ready) return false;
     out = std::move(g_openResult);
     g_openSlot.ready = false;
+    return true;
+}
+
+// ---------------------------------------------------------------- discover
+
+void discover(const std::string& genre) {
+    const int gen = ++g_discoverSlot.generation;
+    g_discoverSlot.running = true;
+    {
+        std::lock_guard<std::mutex> lock(g_discoverSlot.mutex);
+        g_discoverSlot.ready = false;
+    }
+
+    std::thread([genre, gen] {
+        ui::Discovery out = ui::discover(genre);
+        if (!g_alive) return;
+        if (g_discoverSlot.generation.load() != gen) return;  // genre changed
+
+        {
+            std::lock_guard<std::mutex> lock(g_discoverSlot.mutex);
+            g_discoverResult = std::move(out);
+            g_discoverSlot.ready = true;
+        }
+        g_discoverSlot.running = false;
+        if (g_notify) g_notify();
+    }).detach();
+}
+
+bool discoverRunning() { return g_discoverSlot.running; }
+
+bool takeDiscover(ui::Discovery& out) {
+    std::lock_guard<std::mutex> lock(g_discoverSlot.mutex);
+    if (!g_discoverSlot.ready) return false;
+    out = std::move(g_discoverResult);
+    g_discoverSlot.ready = false;
     return true;
 }
 

@@ -78,6 +78,37 @@ struct SearchOutcome {
 
 SearchOutcome search(const std::string& query, int resolution);
 
+// ---- discovery -------------------------------------------------------
+//
+// For when you do not already know what you want. Shelves of what is
+// trending, what is airing this season and what is popular overall, each
+// narrowable to a genre.
+
+struct DiscoverItem {
+    int id = 0;
+    int episodes = 0;
+    int year = 0;
+    int score = 0;  // 0 when unrated
+    std::string title;
+    std::string cover;
+    std::string format;
+};
+
+struct Shelf {
+    std::string title;
+    std::vector<DiscoverItem> items;
+};
+
+// Blocking; run it off the interface thread. An empty genre means all.
+struct Discovery {
+    std::vector<Shelf> shelves;
+    std::string error;  // empty when the answer was simply empty
+};
+Discovery discover(const std::string& genre);
+
+// The genres worth offering as filters.
+std::vector<std::string> genreList();
+
 // ---- opening a torrent ----------------------------------------------
 
 struct OpenedFile {
