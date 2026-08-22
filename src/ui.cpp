@@ -305,8 +305,10 @@ void applySessionSettings(Engine& e, const Settings& cfg) {
     e.session.apply_settings(sp);
 
     http::setDohUrl(cfg.dohUrl);
-    if (cfg.discordPresence && !cfg.discordClientId.empty()) {
-        discord::connect(cfg.discordClientId);
+    if (cfg.discordPresence) {
+        // No longer conditional on a configured id - there is a built-in one,
+        // so presence works out of the box for anyone the app is shared with.
+        discord::connect(discord::resolveClientId(cfg.discordClientId));
     } else {
         discord::clear();
         discord::disconnect();
@@ -1044,6 +1046,8 @@ Status status() {
     s.videoActive = e.videoActive;
     s.progress = e.progress;
     s.message = e.getMessage();
+
+    s.discordConnected = discord::connected();
 
     if (e.handle.is_valid()) {
         const lt::torrent_status ts = e.handle.status();

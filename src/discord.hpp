@@ -14,6 +14,18 @@ namespace tsuzuki::discord {
 // has to be one the user registered at discord.com/developers. It is a public
 // identifier, not a secret, but it is still theirs rather than ours.
 
+// Tsuzuki's own application id, shipped with the app so presence works for
+// everyone rather than only for whoever registered it.
+//
+// Unlike the AniList client secret, this is not a credential. Discord
+// application ids travel inside every presence payload and are visible to
+// anyone who can see your status, so there is nothing here to protect - it
+// only names the application Discord displays.
+std::string defaultClientId();
+
+// The id from settings when one was entered, otherwise the built-in one.
+std::string resolveClientId(const std::string& fromSettings);
+
 // Connects if Discord is running. Safe to call repeatedly.
 bool connect(const std::string& clientId);
 

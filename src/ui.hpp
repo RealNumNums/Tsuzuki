@@ -132,6 +132,9 @@ struct Status {
     int seeds = 0;
     long long downloadRate = 0;  // bytes per second
     long long downloaded = 0;    // bytes this session
+
+    // Whether Discord accepted the connection, so Settings can say so.
+    bool discordConnected = false;
 };
 Status status();
 

@@ -307,15 +307,23 @@ bool settingsScreen(Ui& u, State& st) {
         toggle(u, 7610, ctrl, s.discordPresence);
     }
     if (s.discordPresence) {
-        // Discord will not accept a presence without an application id, and
-        // it has to be one you registered - it is the name Discord shows.
-        // Make one at discord.com/developers, call it Tsuzuki, paste the
-        // Application ID here.
+        // Say plainly whether Discord accepted us. Presence failing silently
+        // is the whole reason this was broken and nobody could tell.
+        const ui::Status st2 = ui::status();
+        const bool live = st2.discordConnected;
+        u.c.fill({kPad, y + 4, 7, 7}, live ? good : gfx::rgb(0x5A5A68), 3.5f);
+        u.c.text(live ? L"Connected to Discord"
+                      : L"Not connected - is Discord running?",
+                 {kPad + 14, y - 4, w - kPad * 2, 18}, dim, f(11.5f));
+        y += 22;
+
+        // Optional. Tsuzuki ships its own application id, so this is only
+        // for pointing the presence at a different Discord app.
         const Rect ctrl = row(u, y, w, L"Discord application ID",
-                              L"From discord.com/developers - name the app whatever you want "
-                              L"shown next to \"Watching\".");
+                              L"Optional - leave empty to use Tsuzuki's own. "
+                              L"Yours goes here if you would rather it showed your app.");
         std::wstring v = widen(s.discordClientId);
-        field(u, st, 7620, ctrl, v, L"required for presence");
+        field(u, st, 7620, ctrl, v, L"using Tsuzuki's own");
         s.discordClientId = narrow(v);
     }
 

@@ -20,6 +20,10 @@ using nlohmann::json;
 std::mutex g_mutex;
 std::string g_clientId;
 
+// Registered as "Tsuzuki" at discord.com/developers. Public by design; see
+// the note in the header.
+constexpr const char* kDefaultClientId = "1540524110235303936";
+
 #ifdef _WIN32
 HANDLE g_pipe = INVALID_HANDLE_VALUE;
 
@@ -91,6 +95,12 @@ void drain() {}
 #endif
 
 }  // namespace
+
+std::string defaultClientId() { return kDefaultClientId; }
+
+std::string resolveClientId(const std::string& fromSettings) {
+    return fromSettings.empty() ? defaultClientId() : fromSettings;
+}
 
 bool connect(const std::string& clientId) {
     std::lock_guard<std::mutex> lock(g_mutex);
