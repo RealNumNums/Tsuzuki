@@ -13,6 +13,12 @@ struct Response {
     long status = 0;
     std::string body;
     std::string error;
+
+    // What the server said about how much more it will take. AniList sends
+    // these on every response, and throwing them away meant the only way to
+    // discover the budget was to exceed it.
+    int rateLimitRemaining = -1;  // -1 when the server did not say
+    long long retryAfterSeconds = 0;
 };
 
 Response get(const std::string& url, int timeoutSeconds = 20);

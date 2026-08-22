@@ -1,13 +1,44 @@
 #include "http.hpp"
 
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+
 #include <curl/curl.h>
 
 #include <array>
 #include <cstring>
 #include <mutex>
 
+
+
 namespace tsuzuki::http {
 namespace {
+
+// Pulls the two headers worth knowing about out of the response.
+size_t headerCb(char* buffer, size_t size, size_t items, void* userdata) {
+    const size_t bytes = size * items;
+    auto* r = static_cast<Response*>(userdata);
+    std::string line(buffer, bytes);
+
+    const auto colon = line.find(':');
+    if (colon == std::string::npos) return bytes;
+    std::string name = line.substr(0, colon);
+    std::string value = line.substr(colon + 1);
+
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) value.erase(0, 1);
+    while (!value.empty() && (value.back() == '\r' || value.back() == '\n')) value.pop_back();
+
+    if (name == "x-ratelimit-remaining") {
+        r->rateLimitRemaining = std::atoi(value.c_str());
+    } else if (name == "retry-after") {
+        r->retryAfterSeconds = std::atoll(value.c_str());
+    }
+    return bytes;
+}
+
 
 std::once_flag g_initOnce;
 std::string g_dohUrl;
@@ -52,6 +83,8 @@ Response get(const std::string& url, int timeoutSeconds) {
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "tsuzuki/0.1 (+https://github.com/RealNumNums/Tsuzuki)");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &r.body);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCb);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &r);
     applyDoh(curl);
 
     const CURLcode code = curl_easy_perform(curl);
@@ -66,6 +99,7 @@ Response get(const std::string& url, int timeoutSeconds) {
     curl_easy_cleanup(curl);
     return r;
 }
+
 
 Response postJson(const std::string& url, const std::string& body, int timeoutSeconds,
                   const std::string& bearerToken) {
@@ -98,6 +132,8 @@ Response postJson(const std::string& url, const std::string& body, int timeoutSe
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "tsuzuki/0.1 (+https://github.com/RealNumNums/Tsuzuki)");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &r.body);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCb);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &r);
     applyDoh(curl);
 
     const CURLcode code = curl_easy_perform(curl);

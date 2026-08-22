@@ -1,4 +1,8 @@
 #include "anilist.hpp"
+#include <algorithm>
+#include <thread>
+#include <mutex>
+#include <chrono>
 
 #include <nlohmann/json.hpp>
 
@@ -9,11 +13,31 @@
 
 namespace tsuzuki::anilist {
 
+
+
 using nlohmann::json;
 
 namespace {
 
 constexpr const char* kEndpoint = "https://graphql.anilist.co";
+
+namespace {
+
+std::mutex g_gate;
+std::chrono::steady_clock::time_point g_nextAllowed{};
+std::chrono::steady_clock::time_point g_lastSent{};
+int g_remaining = -1;
+
+// AniList publishes 90 requests a minute and has been observed running well
+// below that, so the pacing is driven by what it reports rather than by the
+// documented figure. These are only the floor and the panic threshold.
+constexpr int kSlowDownBelow = 20;   // start spacing requests out
+constexpr int kCrawlBelow = 5;       // one every two seconds
+
+}  // namespace
+
+
+
 
 constexpr const char* kSearchQuery = R"(
 query ($search: String) {
@@ -38,6 +62,61 @@ std::string pick(const json& titles, const char* key) {
 
 }  // namespace
 
+long long pausedFor() {
+    std::lock_guard<std::mutex> lock(g_gate);
+    const auto now = std::chrono::steady_clock::now();
+    if (g_nextAllowed <= now) return 0;
+    return std::chrono::duration_cast<std::chrono::seconds>(g_nextAllowed - now).count() + 1;
+}
+
+int budgetLeft() {
+    std::lock_guard<std::mutex> lock(g_gate);
+    return g_remaining;
+}
+
+http::Response post(const std::string& body, const std::string& bearer) {
+    // Wait out any hold, in short sleeps so shutdown is not delayed by a
+    // thread parked on a minute-long timer.
+    for (;;) {
+        std::chrono::steady_clock::duration wait{};
+        {
+            std::lock_guard<std::mutex> lock(g_gate);
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= g_nextAllowed) {
+                // Claim this slot before releasing the lock, so two threads
+                // cannot both decide it is their turn.
+                g_lastSent = now;
+                break;
+            }
+            wait = g_nextAllowed - now;
+        }
+        std::this_thread::sleep_for(
+            (std::min)(std::chrono::duration_cast<std::chrono::milliseconds>(wait),
+                       std::chrono::milliseconds(200)));
+    }
+
+    const http::Response res = http::postJson(kEndpoint, body, 20, bearer);
+
+    std::lock_guard<std::mutex> lock(g_gate);
+    if (res.rateLimitRemaining >= 0) g_remaining = res.rateLimitRemaining;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (res.status == 429) {
+        // Retry-After is authoritative; a minute is the fallback when the
+        // header is missing. Everything waits, not just this caller - the
+        // limit is per address, so one thread pressing on would keep the
+        // whole program refused.
+        const long long secs = res.retryAfterSeconds > 0 ? res.retryAfterSeconds : 60;
+        g_nextAllowed = now + std::chrono::seconds(secs);
+        g_remaining = 0;
+    } else if (g_remaining >= 0 && g_remaining < kCrawlBelow) {
+        g_nextAllowed = now + std::chrono::seconds(2);
+    } else if (g_remaining >= 0 && g_remaining < kSlowDownBelow) {
+        g_nextAllowed = now + std::chrono::milliseconds(600);
+    }
+    return res;
+}
+
 std::vector<Media> search(const std::string& text) {
     std::vector<Media> out;
 
@@ -45,7 +124,7 @@ std::vector<Media> search(const std::string& text) {
     body["query"] = kSearchQuery;
     body["variables"]["search"] = text;
 
-    const auto res = http::postJson(kEndpoint, body.dump());
+    const auto res = post(body.dump(), "");
     if (!res.ok) return out;
 
     json j;
@@ -145,7 +224,7 @@ bool details(int id, Details& out) {
     body["query"] = kDetailsQuery;
     body["variables"]["id"] = id;
 
-    const auto res = http::postJson(kEndpoint, body.dump());
+    const auto res = post(body.dump(), "");
     if (!res.ok) return false;
 
     json j;
@@ -295,7 +374,7 @@ std::vector<DiscoverShelf> discoverShelves(const std::string& genre, bool allowA
     body["query"] = gql;
     if (!genre.empty()) body["variables"] = json{{"genre", genre}};
 
-    const auto res = http::postJson(kEndpoint, body.dump());
+    const auto res = post(body.dump(), "");
     if (!res.ok) {
         if (error) {
             *error = res.status == 429
@@ -395,7 +474,7 @@ std::vector<BrowseItem> browse(const BrowseFilters& f) {
     body["query"] = gql;
     body["variables"] = vars;
 
-    const auto res = http::postJson(kEndpoint, body.dump());
+    const auto res = post(body.dump(), "");
     if (!res.ok) return out;
 
     json j;
@@ -447,7 +526,7 @@ std::vector<AiringItem> airing(int days) {
     body["query"] = kAiringQuery;
     body["variables"] = vars;
 
-    const auto res = http::postJson(kEndpoint, body.dump());
+    const auto res = post(body.dump(), "");
     if (!res.ok) return out;
 
     json j;

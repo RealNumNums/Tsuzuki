@@ -1894,7 +1894,10 @@ static void installRoutes(httplib::Server& server, Engine& e) {
                              {"pending", st.pending},
                              {"lastSyncAt", st.lastSyncAt},
                              {"lastError", st.lastError},
-                             {"linked", st.state != library::SyncState::NotLinked}}
+                             {"linked", st.state != library::SyncState::NotLinked},
+                             // What the gate can see of the AniList budget.
+                             {"budgetLeft", anilist::budgetLeft()},
+                             {"pausedFor", anilist::pausedFor()}}
                             .dump(),
                         "application/json");
     });

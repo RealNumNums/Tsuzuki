@@ -3,7 +3,30 @@
 #include <string>
 #include <vector>
 
+#include "http.hpp"
+
 namespace tsuzuki::anilist {
+
+// ---- the gate --------------------------------------------------------
+//
+// Every AniList request in the program goes through post(). One budget,
+// one place that knows how much of it is left, one place that waits.
+//
+// The alternative - each caller minding its own manners - is what was here
+// before, and it does not work: nobody can see the whole picture, the
+// budget is only discovered by exceeding it, and the recovery is whatever
+// each caller happens to do.
+
+// Seconds until requests will be sent again. Zero when nothing is holding
+// them back, so the interface can say "waiting 34s" rather than "failed".
+long long pausedFor();
+
+// Remaining requests in the current window as AniList last reported it,
+// or -1 before it has said.
+int budgetLeft();
+
+// The one way to talk to AniList. Both this file and the account layer use it.
+http::Response post(const std::string& body, const std::string& bearer);
 
 struct Media {
     int id = 0;          // AniList ID - also the key SeaDex indexes by

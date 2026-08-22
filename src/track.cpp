@@ -1,5 +1,7 @@
 #include "track.hpp"
 
+#include "anilist.hpp"
+
 #include <chrono>
 
 #include <nlohmann/json.hpp>
@@ -106,7 +108,7 @@ QueryResult queryEx(const std::string& gql, const json& variables, const std::st
     body["query"] = gql;
     if (!variables.is_null()) body["variables"] = variables;
 
-    const auto res = http::postJson(kEndpoint, body.dump(), 20, tok);
+    const auto res = anilist::post(body.dump(), tok);
 
     QueryResult out;
     out.status = res.status;
