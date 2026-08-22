@@ -211,7 +211,8 @@ bool settingsScreen(Ui& u, State& st) {
             if (!t.configured) {
                 std::wstring value = widen(t.id == "mal" ? s.malClientId : s.simklClientId);
                 const Rect box{w - kPad - kCtrlW, y, kCtrlW, 30};
-                field(u, st, t.id == "mal" ? 7810 : 7811, box, value, L"paste the Client ID");
+                field(u, st, t.id == "mal" ? 7810 : 7811, box, value,
+                      L"paste the Client ID");
                 u.c.text(L"Client ID", {kPad, y + 6, 200, 18}, dim, f(11.5f));
                 if (t.id == "mal") {
                     s.malClientId = narrow(value);

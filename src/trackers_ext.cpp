@@ -15,6 +15,17 @@
 #include "settings.hpp"
 #include "ui.hpp"
 
+// Optional, gitignored, same as the AniList credentials.
+#if __has_include("secrets.local.hpp")
+#include "secrets.local.hpp"
+#endif
+#ifndef TSUZUKI_MAL_CLIENT_ID
+#define TSUZUKI_MAL_CLIENT_ID ""
+#endif
+#ifndef TSUZUKI_SIMKL_CLIENT_ID
+#define TSUZUKI_SIMKL_CLIENT_ID ""
+#endif
+
 #include <nlohmann/json.hpp>
 
 #include <cstdlib>
@@ -102,7 +113,7 @@ class MyAnimeList final : public Service {
 
     bool configured() const override { return !clientId().empty(); }
     std::string configHint() const override {
-        return "Needs a Client ID from myanimelist.net/apiconfig.";
+        return "No Client ID is built in. Add one from myanimelist.net/apiconfig.";
     }
 
     void load() override { loadStore(); }
@@ -203,7 +214,11 @@ class MyAnimeList final : public Service {
         return "watching";
     }
     static std::string bearer(const std::string& t) { return t; }
-    static std::string clientId() { return ui::settings().malClientId; }
+    // The built-in id unless somebody has pointed this at their own app.
+    static std::string clientId() {
+        const std::string fromSettings = ui::settings().malClientId;
+        return fromSettings.empty() ? std::string(TSUZUKI_MAL_CLIENT_ID) : fromSettings;
+    }
     static std::string makeVerifier() {
         // 64 URL-safe characters, which is inside MAL's 43-128 range.
         static const char* alphabet =
@@ -230,7 +245,7 @@ class Simkl final : public Service {
 
     bool configured() const override { return !clientId().empty(); }
     std::string configHint() const override {
-        return "Needs a Client ID from simkl.com developer settings.";
+        return "No Client ID is built in. Add one from simkl.com developer settings.";
     }
 
     void load() override { loadStore(); }
@@ -343,7 +358,10 @@ class Simkl final : public Service {
     }
 
   private:
-    static std::string clientId() { return ui::settings().simklClientId; }
+    static std::string clientId() {
+        const std::string fromSettings = ui::settings().simklClientId;
+        return fromSettings.empty() ? std::string(TSUZUKI_SIMKL_CLIENT_ID) : fromSettings;
+    }
 
     std::string pending_;
     std::string cachedName_;
