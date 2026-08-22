@@ -35,6 +35,16 @@ void setAuthHook(AuthHook hook);
 // Called by that window once it has the token.
 void acceptToken(const std::string& token);
 
+// The sign-in window hands over every URL it is about to navigate to, and
+// whichever service is being linked decides whether that URL is the answer
+// it was waiting for. True means it was, and the navigation should be
+// cancelled - the redirect target is never meant to load.
+//
+// The window cannot make that judgement itself: AniList answers with
+// access_token in the fragment, MyAnimeList with code in the query, and the
+// next service will do something else again.
+bool acceptRedirectUrl(const std::string& url);
+
 // Recently opened torrents, newest first. The native interface reads this
 // directly rather than going back out through the loopback server.
 struct HistoryItem {

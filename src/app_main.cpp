@@ -608,15 +608,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-// Pull "access_token=..." out of a URL fragment.
-std::wstring tokenFromUrl(const std::wstring& url) {
-    const auto at = url.find(L"access_token=");
-    if (at == std::wstring::npos) return {};
-    std::wstring rest = url.substr(at + 13);
-    const auto end = rest.find_first_of(L"&#");
-    if (end != std::wstring::npos) rest = rest.substr(0, end);
-    return rest;
-}
 
 void closeAuthWindow() {
     g_authView.Reset();
@@ -664,7 +655,7 @@ void openAuthWindow(HINSTANCE instance, HWND owner) {
         registered = true;
     }
 
-    g_authWnd = CreateWindowExW(0, L"TsuzukiAuthWindow", L"Sign in to AniList",
+    g_authWnd = CreateWindowExW(0, L"TsuzukiAuthWindow", L"Sign in",
                                 WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT,
                                 CW_USEDEFAULT, 520, 720, owner, nullptr, instance, nullptr);
     if (!g_authWnd) return;
@@ -693,21 +684,26 @@ void openAuthWindow(HINSTANCE instance, HWND owner) {
                             const std::wstring url(uri);
                             CoTaskMemFree(uri);
 
-                            const std::wstring tok = tokenFromUrl(url);
-                            if (tok.empty()) return S_OK;
+                            // Hand the whole URL over and let the service
+                            // being linked recognise its own answer. Looking
+                            // for access_token here only ever worked for
+                            // AniList - MyAnimeList replies with a code, so
+                            // its redirect sailed past and GitHub loaded
+                            // instead.
+                            const int n = WideCharToMultiByte(CP_UTF8, 0, url.c_str(), -1,
+                                                              nullptr, 0, nullptr, nullptr);
+                            std::string narrowUrl(n > 0 ? n - 1 : 0, '\0');
+                            if (n > 0) {
+                                WideCharToMultiByte(CP_UTF8, 0, url.c_str(), -1,
+                                                    narrowUrl.data(), n, nullptr, nullptr);
+                            }
+
+                            if (!tsuzuki::ui::acceptRedirectUrl(narrowUrl)) return S_OK;
 
                             // Stop before the redirect target loads - it may be
                             // anything at all, and we already have what we came for.
                             args->put_Cancel(TRUE);
 
-                            const int n = WideCharToMultiByte(CP_UTF8, 0, tok.c_str(), -1, nullptr,
-                                                              0, nullptr, nullptr);
-                            std::string narrow(n > 0 ? n - 1 : 0, '\0');
-                            if (n > 0) {
-                                WideCharToMultiByte(CP_UTF8, 0, tok.c_str(), -1, narrow.data(), n,
-                                                    nullptr, nullptr);
-                            }
-                            tsuzuki::ui::acceptToken(narrow);
                             if (g_main) PostMessageW(g_main, WM_APP + 3, 0, 0);
                             return S_OK;
                         })

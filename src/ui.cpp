@@ -1535,13 +1535,15 @@ AuthHook g_authHook = nullptr;
 
 void setAuthHook(AuthHook hook) { g_authHook = hook; }
 
+bool acceptRedirectUrl(const std::string& url) {
+    tracker::Service* s = tracker::byId(g_linking);
+    return s && s->acceptRedirect(url);
+}
+
 void acceptToken(const std::string& token) {
-    // The hosted login window hands back whatever it saw in the redirect.
-    // Which service that belongs to depends on which one asked for it.
-    if (tracker::Service* s = tracker::byId(g_linking)) {
-        if (s->acceptRedirect(token)) return;
-    }
-    // AniList historically received a bare token rather than a URL.
+    // A bare token rather than a URL, which is how the AniList flow was
+    // originally wired. Kept so nothing that still calls it breaks.
+    if (token.empty()) return;
     track::setToken(token);
 }
 
